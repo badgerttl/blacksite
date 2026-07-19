@@ -80,6 +80,12 @@ either host location with `OPEN_WEBUI_INPUT_DIR` or `OPEN_WEBUI_OUTPUT_DIR` in `
 Open WebUI does not automatically ingest files from these directories; an installed
 tool or function must explicitly read them.
 
+Importable tools for security-output parsing, bounded file reading, and read-only
+database access are in [`openwebui-tools/`](openwebui-tools/README.md). The parser
+supports 20 common formats and saves normalised results into `workspace/output/`.
+They are registered automatically by a one-shot Compose service after Open WebUI
+becomes healthy. Run `./blacksite tools` to force an immediate idempotent redeploy.
+
 ## Docker and Podman
 
 The `blacksite` helper auto-detects, in order: Docker Compose, `podman compose`, and

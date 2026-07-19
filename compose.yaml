@@ -25,6 +25,10 @@ services:
       - "${BIND_ADDRESS:-127.0.0.1}:${OPEN_WEBUI_PORT:-9000}:8080"
     environment:
       WEBUI_SECRET_KEY: ${OPEN_WEBUI_SECRET_KEY}
+      WEBUI_ADMIN_EMAIL: ${OPEN_WEBUI_ADMIN_EMAIL:-admin@blacksite.local}
+      WEBUI_ADMIN_PASSWORD: ${OPEN_WEBUI_ADMIN_PASSWORD}
+      WEBUI_ADMIN_NAME: ${OPEN_WEBUI_ADMIN_NAME:-Blacksite Admin}
+      ENABLE_API_KEYS: "true"
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OPENAI_API_BASE_URL: ${OPENAI_API_BASE_URL:-https://api.openai.com/v1}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -43,6 +47,30 @@ services:
       - open-webui-data:/app/backend/data
       - ${OPEN_WEBUI_INPUT_DIR:-./workspace/input}:/workspace/input:ro
       - ${OPEN_WEBUI_OUTPUT_DIR:-./workspace/output}:/workspace/output:rw
+    networks:
+      - tools
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=5)"]
+      interval: 5s
+      timeout: 6s
+      retries: 30
+      start_period: 20s
+
+  open-webui-tools-deploy:
+    image: ghcr.io/open-webui/open-webui:v0.10.1
+    restart: "no"
+    entrypoint: ["python", "/deployer/deploy-openwebui-tools.py"]
+    environment:
+      OPEN_WEBUI_URL: http://open-webui:8080
+      OPEN_WEBUI_ADMIN_EMAIL: ${OPEN_WEBUI_ADMIN_EMAIL:-admin@blacksite.local}
+      OPEN_WEBUI_ADMIN_PASSWORD: ${OPEN_WEBUI_ADMIN_PASSWORD}
+      OPEN_WEBUI_TOOLS_TOKEN: ${OPEN_WEBUI_TOOLS_TOKEN:-}
+    volumes:
+      - ./scripts/deploy-openwebui-tools.py:/deployer/deploy-openwebui-tools.py:ro
+      - ./openwebui-tools:/tools:ro
+    depends_on:
+      open-webui:
+        condition: service_healthy
     networks:
       - tools
 
