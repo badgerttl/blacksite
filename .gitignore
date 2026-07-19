@@ -1,0 +1,7 @@
+.env
+*.log
+.DS_Store
+workspace/input/*
+workspace/output/*
+!workspace/input/README.md
+!workspace/output/README.md

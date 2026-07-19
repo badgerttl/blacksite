@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR"
+
+die() {
+  printf 'blacksite: %s\n' "$*" >&2
+  exit 1
+}
+
+compose() {
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    docker compose "$@"
+  elif command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then
+    podman compose "$@"
+  elif command -v podman-compose >/dev/null 2>&1; then
+    podman-compose "$@"
+  else
+    die 'Docker Compose, Podman Compose, or podman-compose is required'
+  fi
+}
+
+random_hex() {
+  local bytes="$1"
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex "$bytes"
+  else
+    od -An -N "$bytes" -tx1 /dev/urandom | tr -d ' \n'
+  fi
+}
+
+set_env() {
+  local key="$1" value="$2" temp
+  temp="$(mktemp "${TMPDIR:-/tmp}/blacksite-env.XXXXXX")"
+  sed "s|^${key}=.*|${key}=${value}|" .env > "$temp"
+  mv "$temp" .env
+}
+
+ensure_secret() {
+  local key="$1" bytes="$2"
+  if ! grep -q "^${key}=" .env; then
+    printf '%s=%s\n' "$key" "$(random_hex "$bytes")" >> .env
+  elif grep -q "^${key}=GENERATE_ME$" .env; then
+    set_env "$key" "$(random_hex "$bytes")"
+  fi
+}
+
+init() {
+  if [[ ! -f .env ]]; then
+    cp .env.example .env
+  fi
+  chmod 600 .env
+  ensure_secret OPEN_WEBUI_SECRET_KEY 32
+  ensure_secret HOPPSCOTCH_DB_PASSWORD 24
+  ensure_secret HOPPSCOTCH_DATA_ENCRYPTION_KEY 16
+  ensure_secret HOPPSCOTCH_SESSION_SECRET 32
+  ensure_secret SEARXNG_SECRET_KEY 32
+  printf 'Configuration ready: %s/.env\n' "$ROOT_DIR"
+}
+
+ensure_env() {
+  [[ -f .env ]] || init
+  chmod 600 .env
+  ensure_secret OPEN_WEBUI_SECRET_KEY 32
+  ensure_secret HOPPSCOTCH_DB_PASSWORD 24
+  ensure_secret HOPPSCOTCH_DATA_ENCRYPTION_KEY 16
+  ensure_secret HOPPSCOTCH_SESSION_SECRET 32
+  ensure_secret SEARXNG_SECRET_KEY 32
+  if grep -q '=GENERATE_ME' .env; then
+    die 'replace all GENERATE_ME values in .env'
+  fi
+}
+
+urls() {
+  ensure_env
+  local host='localhost'
+  local open_webui_port hoppscotch_port cloudbeaver_port revshell_port cyberchef_port hacktricks_port searxng_port
+  open_webui_port="$(sed -n 's/^OPEN_WEBUI_PORT=//p' .env)"
+  hoppscotch_port="$(sed -n 's/^HOPPSCOTCH_PORT=//p' .env)"
+  cloudbeaver_port="$(sed -n 's/^CLOUDBEAVER_PORT=//p' .env)"
+  revshell_port="$(sed -n 's/^REVSHELL_PORT=//p' .env)"
+  cyberchef_port="$(sed -n 's/^CYBERCHEF_PORT=//p' .env)"
+  hacktricks_port="$(sed -n 's/^HACKTRICKS_PORT=//p' .env)"
+  searxng_port="$(sed -n 's/^SEARXNG_PORT=//p' .env)"
+  printf '%-15s http://%s:%s\n' 'Open WebUI' "$host" "$open_webui_port"
+  printf '%-15s http://%s:%s\n' 'Hoppscotch' "$host" "$hoppscotch_port"
+  printf '%-15s http://%s:%s/admin\n' 'Hopp Admin' "$host" "$hoppscotch_port"
+  printf '%-15s http://%s:%s\n' 'CloudBeaver' "$host" "$cloudbeaver_port"
+  printf '%-15s http://%s:%s\n' 'CyberChef' "$host" "$cyberchef_port"
+  printf '%-15s http://%s:%s\n' 'RevShell' "$host" "$revshell_port"
+  printf '%-15s http://%s:%s\n' 'HackTricks' "$host" "$hacktricks_port"
+  printf '%-15s http://%s:%s\n' 'SearXNG' "$host" "$searxng_port"
+}
+
+with_ollama=false
+args=()
+for arg in "$@"; do
+  if [[ "$arg" == '--local-llm' ]]; then
+    with_ollama=true
+  else
+    args+=("$arg")
+  fi
+done
+set -- "${args[@]}"
+
+command_name="${1:-help}"
+shift || true
+
+case "$command_name" in
+  init)
+    init
+    ;;
+  up)
+    ensure_env
+    if $with_ollama; then
+      compose -f compose.yaml -f compose.ollama.yaml up -d --build "$@"
+    else
+      compose up -d --build "$@"
+    fi
+    urls
+    ;;
+  down)
+    ensure_env
+    if $with_ollama; then
+      compose -f compose.yaml -f compose.ollama.yaml down "$@"
+    else
+      compose down "$@"
+    fi
+    ;;
+  pull)
+    ensure_env
+    if $with_ollama; then
+      compose -f compose.yaml -f compose.ollama.yaml pull open-webui hoppscotch-db hoppscotch-migrate hoppscotch cloudbeaver cyberchef searxng ollama "$@"
+    else
+      compose pull open-webui hoppscotch-db hoppscotch-migrate hoppscotch cloudbeaver cyberchef searxng "$@"
+    fi
+    ;;
+  build)
+    ensure_env
+    compose build "$@"
+    ;;
+  status|ps)
+    ensure_env
+    compose ps "$@"
+    ;;
+  logs)
+    ensure_env
+    compose logs -f "$@"
+    ;;
+  migrate)
+    ensure_env
+    compose run --rm hoppscotch-migrate
+    ;;
+  model)
+    ensure_env
+    model_name="${1:-qwen3:8b}"
+    compose -f compose.yaml -f compose.ollama.yaml up -d ollama
+    compose -f compose.yaml -f compose.ollama.yaml exec ollama ollama pull "$model_name"
+    ;;
+  urls)
+    urls
+    ;;
+  config)
+    ensure_env
+    compose config "$@"
+    ;;
+  workspace)
+    ensure_env
+    input_dir="$(sed -n 's/^OPEN_WEBUI_INPUT_DIR=//p' .env)"
+    output_dir="$(sed -n 's/^OPEN_WEBUI_OUTPUT_DIR=//p' .env)"
+    if [[ "$input_dir" == /* ]]; then
+      host_input="$input_dir"
+    else
+      host_input="$ROOT_DIR/${input_dir#./}"
+    fi
+    if [[ "$output_dir" == /* ]]; then
+      host_output="$output_dir"
+    else
+      host_output="$ROOT_DIR/${output_dir#./}"
+    fi
+    printf '%-15s %s\n' 'Host input' "$host_input"
+    printf '%-15s %s\n' 'Host output' "$host_output"
+    printf '%-15s %s\n' 'Container input' '/workspace/input (read-only)'
+    printf '%-15s %s\n' 'Container output' '/workspace/output (writable)'
+    ;;
+  help|-h|--help)
+    cat <<'EOF'
+Usage: ./blacksite COMMAND [--local-llm] [ARGS...]
+
+Commands:
+  init             Create .env and generate persistent secrets
+  up               Build and start all services
+  down             Stop services (data volumes are preserved)
+  pull             Pull updated pre-built images
+  build            Build RevShell and offline HackTricks
+  status           Show service status
+  logs [SERVICE]   Follow logs
+  migrate          Re-run Hoppscotch database migrations
+  model [NAME]     Pull an Ollama model (default: qwen3:8b)
+  urls             Print local service URLs
+  config           Render and validate the Compose configuration
+  workspace        Print host and container workspace paths
+
+Examples:
+  ./blacksite init
+  ./blacksite up
+  ./blacksite up --local-llm
+  ./blacksite model qwen3:8b
+EOF
+    ;;
+  *)
+    die "unknown command: ${command_name}"
+    ;;
+esac

@@ -1,0 +1,176 @@
+name: blacksite
+
+x-hoppscotch-environment: &hoppscotch-environment
+  DATABASE_URL: postgresql://hoppscotch:${HOPPSCOTCH_DB_PASSWORD}@hoppscotch-db:5432/hoppscotch
+  DATA_ENCRYPTION_KEY: ${HOPPSCOTCH_DATA_ENCRYPTION_KEY}
+  INFRA.SESSION_SECRET: ${HOPPSCOTCH_SESSION_SECRET}
+  WHITELISTED_ORIGINS: ${HOPPSCOTCH_PUBLIC_URL},app://localhost_3200,app://hoppscotch
+  TRUST_PROXY: "false"
+  ENABLE_SUBPATH_BASED_ACCESS: "true"
+  # 8080 is reserved by the AIO backend; Caddy uses this separate public port.
+  HOPP_AIO_ALTERNATE_PORT: "3000"
+  VITE_BASE_URL: ${HOPPSCOTCH_PUBLIC_URL}
+  VITE_SHORTCODE_BASE_URL: ${HOPPSCOTCH_PUBLIC_URL}
+  VITE_ADMIN_URL: ${HOPPSCOTCH_PUBLIC_URL}/admin
+  VITE_BACKEND_GQL_URL: ${HOPPSCOTCH_PUBLIC_URL}/backend/graphql
+  VITE_BACKEND_WS_URL: ${HOPPSCOTCH_WS_URL}/backend/graphql
+  VITE_BACKEND_API_URL: ${HOPPSCOTCH_PUBLIC_URL}/backend/v1
+  VITE_PROXYSCOTCH_ACCESS_TOKEN: ""
+
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.10.1
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${OPEN_WEBUI_PORT:-9000}:8080"
+    environment:
+      WEBUI_SECRET_KEY: ${OPEN_WEBUI_SECRET_KEY}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OPENAI_API_BASE_URL: ${OPENAI_API_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ENABLE_VERSION_UPDATE_CHECK: "false"
+      ENABLE_WEB_SEARCH: "true"
+      WEB_SEARCH_ENGINE: searxng
+      WEB_SEARCH_RESULT_COUNT: "5"
+      WEB_SEARCH_CONCURRENT_REQUESTS: "10"
+      SEARXNG_QUERY_URL: http://searxng:8080/search?q=<query>
+      BLACKSITE_INPUT_DIR: /workspace/input
+      BLACKSITE_OUTPUT_DIR: /workspace/output
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "host.containers.internal:host-gateway"
+    volumes:
+      - open-webui-data:/app/backend/data
+      - ${OPEN_WEBUI_INPUT_DIR:-./workspace/input}:/workspace/input:ro
+      - ${OPEN_WEBUI_OUTPUT_DIR:-./workspace/output}:/workspace/output:rw
+    networks:
+      - tools
+
+  searxng:
+    image: searxng/searxng:2026.7.17-81c9c2386
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${SEARXNG_PORT:-9006}:8080"
+    environment:
+      SEARXNG_BASE_URL: ${SEARXNG_PUBLIC_URL:-http://localhost:9006/}
+      SEARXNG_SECRET: ${SEARXNG_SECRET_KEY}
+    volumes:
+      - ./config/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+      - DAC_OVERRIDE
+    networks:
+      - tools
+
+  hoppscotch-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hoppscotch
+      POSTGRES_USER: hoppscotch
+      POSTGRES_PASSWORD: ${HOPPSCOTCH_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hoppscotch -d hoppscotch"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - hoppscotch-db-data:/var/lib/postgresql/data
+    networks:
+      - tools
+
+  hoppscotch-migrate:
+    image: hoppscotch/hoppscotch:2026.3.1
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["pnpm exec prisma migrate deploy"]
+    environment: *hoppscotch-environment
+    depends_on:
+      hoppscotch-db:
+        condition: service_healthy
+    networks:
+      - tools
+
+  hoppscotch:
+    image: hoppscotch/hoppscotch:2026.3.1
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${HOPPSCOTCH_PORT:-9001}:3000"
+    environment: *hoppscotch-environment
+    depends_on:
+      hoppscotch-db:
+        condition: service_healthy
+      hoppscotch-migrate:
+        condition: service_completed_successfully
+    networks:
+      - tools
+
+  cloudbeaver:
+    image: dbeaver/cloudbeaver:26.1.2
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${CLOUDBEAVER_PORT:-9002}:8978"
+    volumes:
+      - cloudbeaver-workspace:/opt/cloudbeaver/workspace
+    networks:
+      - tools
+
+  revshell:
+    build:
+      context: ./containers/revshell
+      args:
+        REVSHELL_REF: ${REVSHELL_REF:-9fda27f91b1b1f370539dd534bc3bbb1f6b49bf6}
+    image: localhost/blacksite-revshell:${REVSHELL_REF:-9fda27f91b1b1f370539dd534bc3bbb1f6b49bf6}
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${REVSHELL_PORT:-9004}:8080"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    networks:
+      - tools
+
+  cyberchef:
+    image: ghcr.io/gchq/cyberchef:11.2.0
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${CYBERCHEF_PORT:-9003}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+    networks:
+      - tools
+
+  hacktricks:
+    build:
+      context: ./containers/hacktricks
+      args:
+        HACKTRICKS_REF: ${HACKTRICKS_REF:-44710df25c15548cb3b03227d62c7773835aa5b3}
+    image: localhost/blacksite-hacktricks:${HACKTRICKS_REF:-44710df25c15548cb3b03227d62c7773835aa5b3}
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${HACKTRICKS_PORT:-9005}:8080"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    networks:
+      - tools
+
+networks:
+  tools:
+    driver: bridge
+
+volumes:
+  open-webui-data:
+  hoppscotch-db-data:
+  cloudbeaver-workspace:
