@@ -79,6 +79,69 @@ class OpenWebUIToolsTest(unittest.TestCase):
         self.assertEqual(result["format"], "bloodhound_json_zip")
         self.assertTrue((self.output / Path(result["saved_output"]).name).is_file())
 
+    def test_all_tenable_export_families_and_generic_csv(self):
+        tool = load_tool("security_output_parser")
+        tool.valves.input_root = str(self.input)
+        tool.valves.output_root = str(self.output)
+
+        fixtures = {
+            "tenable.csv": "Plugin ID,CVE,Risk,Host,Protocol,Port,Name,Description,Solution,Plugin Output\n100,CVE-2026-1,High,10.0.0.1,tcp,443,TLS issue,description,fix,evidence\n",
+            "tenable.json": json.dumps([{"finding_id": "f-1", "severity": "critical", "asset": {"hostname": "host"}, "plugin": {"id": 100, "name": "Plugin finding", "description": "desc", "solution": "fix"}, "output": "evidence"}]),
+            "tenable-was.xml": "<report><vulnerabilities><vulnerability><name>XSS</name><severity>high</severity><url>https://host/x</url><description>desc</description></vulnerability></vulnerabilities></report>",
+            "tenable.html": "<html><head><title>Tenable Report</title></head><body><table><tr><th>Name</th><th>Risk</th><th>Host</th></tr><tr><td>Weak TLS</td><td>High</td><td>host</td></tr></table></body></html>",
+            "scan.db": b"proprietary-encrypted-tenable-data",
+            "policy.json": json.dumps({"uuid": "policy-1", "name": "Basic scan", "settings": {}, "plugins": {}}),
+            "timing.csv": "Hostname,IP,FQDN,Scan Start,Scan End,Duration\nhost,10.0.0.1,host.test,1,2,1\n",
+        }
+        for filename, content in fixtures.items():
+            path = self.input / filename
+            path.write_bytes(content if isinstance(content, bytes) else content.encode())
+
+        expected = {
+            "tenable.csv": "tenable_csv",
+            "tenable.json": "tenable_json",
+            "tenable-was.xml": "tenable_was_xml",
+            "tenable.html": "tenable_html",
+            "scan.db": "tenable_db",
+            "policy.json": "tenable_policy_json",
+            "timing.csv": "tenable_timing_csv",
+        }
+        for filename, output_format in expected.items():
+            with self.subTest(filename=filename):
+                detected = json.loads(asyncio.run(tool.detect_security_output_format(filename)))
+                self.assertEqual(detected["format"], output_format)
+                parsed = json.loads(asyncio.run(tool.parse_security_output(filename, "auto", False)))
+                self.assertGreaterEqual(parsed["finding_count"], 1)
+
+        archive = self.input / "security-center.zip"
+        with zipfile.ZipFile(archive, "w") as handle:
+            handle.writestr("scan.nessus", '<NessusClientData_v2><Report><ReportHost name="host"><ReportItem port="22" protocol="tcp" severity="2" pluginName="SSH" pluginFamily="Services" pluginID="100"/></ReportHost></Report></NessusClientData_v2>')
+        parsed = json.loads(asyncio.run(tool.parse_security_output(archive.name, "auto", False)))
+        self.assertEqual(parsed["format"], "tenable_nessus_zip")
+        self.assertEqual(parsed["finding_count"], 1)
+
+        from pypdf import PdfWriter
+        pdf_path = self.input / "tenable.pdf"
+        writer = PdfWriter()
+        writer.add_blank_page(width=612, height=792)
+        with pdf_path.open("wb") as handle:
+            writer.write(handle)
+        parsed = json.loads(asyncio.run(tool.parse_security_output(pdf_path.name, "auto", False)))
+        self.assertEqual(parsed["format"], "tenable_pdf")
+        self.assertEqual(parsed["finding_count"], 1)
+
+        generic = self.input / "custom.csv"
+        generic.write_text("Issue,Rating,Machine,Fix,Password\nExposed service,Critical,server-1,Close it,do-not-return\n")
+        parsed = json.loads(asyncio.run(tool.parse_generic_csv(
+            generic.name,
+            json.dumps({"title": "Issue", "severity": "Rating", "host": "Machine", "remediation": "Fix"}),
+            "auto",
+            False,
+        )))
+        self.assertEqual(parsed["preview"][0]["title"], "Exposed service")
+        self.assertEqual(parsed["preview"][0]["severity"], "critical")
+        self.assertNotIn("do-not-return", json.dumps(parsed))
+
     def test_file_reader_is_bounded_and_jailed(self):
         (self.input / "evidence.txt").write_text("alpha\nbeta\ngamma\n")
         tool = load_tool("workspace_files")
@@ -102,6 +165,37 @@ class OpenWebUIToolsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             asyncio.run(tool.query_sqlite_database("findings.db", "DELETE FROM findings"))
 
+    def test_workspace_writer_and_sqlite_export(self):
+        database = self.input / "services.db"
+        connection = sqlite3.connect(database)
+        connection.execute("CREATE TABLE services (ip TEXT, port INTEGER, protocol TEXT, state TEXT)")
+        connection.executemany(
+            "INSERT INTO services VALUES (?, ?, ?, ?)",
+            [("192.0.2.10", 22, "tcp", "open"), ("192.0.2.20", 443, "tcp", "open")],
+        )
+        connection.commit()
+        connection.close()
+        tool = load_tool("workspace_writer")
+        tool.valves.input_root = str(self.input)
+        tool.valves.output_root = str(self.output)
+        result = json.loads(asyncio.run(tool.export_sqlite_query(
+            "services.db",
+            "SELECT DISTINCT ip FROM services WHERE port = :port AND state = 'open'",
+            "reports/ssh-open.csv",
+            "csv",
+            '{"port": 22}',
+        )))
+        self.assertEqual(result["row_count"], 1)
+        self.assertEqual((self.output / "reports" / "ssh-open.csv").read_text(), "ip\n192.0.2.10\n")
+        with self.assertRaises(FileExistsError):
+            asyncio.run(tool.write_output_text("reports/ssh-open.csv", "replacement"))
+        with self.assertRaises(ValueError):
+            asyncio.run(tool.write_output_text("../escape.txt", "blocked"))
+        with self.assertRaises(ValueError):
+            asyncio.run(tool.export_sqlite_query(
+                "services.db", "DELETE FROM services", "blocked.csv", "csv"
+            ))
+
 
 class ToolDeploymentTest(unittest.TestCase):
     def setUp(self):
@@ -116,10 +210,36 @@ class ToolDeploymentTest(unittest.TestCase):
             def __init__(self):
                 super().__init__("http://open-webui", "token")
                 self.tools = {}
+                self.admin_config = {
+                    "WEBUI_URL": "http://localhost:3000",
+                    "ENABLE_SIGNUP": True,
+                    "ENABLE_API_KEYS": True,
+                    "ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS": False,
+                    "API_KEYS_ALLOWED_ENDPOINTS": "",
+                    "DEFAULT_USER_ROLE": "user",
+                    "JWT_EXPIRES_IN": "4w",
+                    "ENABLE_COMMUNITY_SHARING": True,
+                }
+                self.task_config = {"ENABLE_FOLLOW_UP_GENERATION": True}
+                self.rag_config = {"FILE_MAX_SIZE": None, "FILE_MAX_COUNT": None, "ALLOWED_FILE_EXTENSIONS": []}
+                self.connections_config = {"ENABLE_DIRECT_CONNECTIONS": True, "ENABLE_BASE_MODELS_CACHE": True}
 
             def request(self, method, path, payload=None, *, authenticate=True):
                 if path == "/health":
                     return 200, {"status": True}
+                configs = {
+                    "/api/v1/auths/admin/config": "admin_config",
+                    "/api/v1/tasks/config": "task_config",
+                    "/api/v1/tasks/config/update": "task_config",
+                    "/api/v1/retrieval/config": "rag_config",
+                    "/api/v1/retrieval/config/update": "rag_config",
+                    "/api/v1/configs/connections": "connections_config",
+                }
+                if path in configs:
+                    attribute = configs[path]
+                    if method == "POST":
+                        setattr(self, attribute, dict(payload))
+                    return 200, getattr(self, attribute)
                 if method == "GET" and path.startswith("/api/v1/tools/id/"):
                     tool_id = path.rsplit("/", 1)[1]
                     return (200, self.tools[tool_id]) if tool_id in self.tools else (404, "Not found")
@@ -143,6 +263,16 @@ class ToolDeploymentTest(unittest.TestCase):
         action = self.client.deploy_tool("tool_id", "Tool", "version-two", "Description")
         self.assertEqual(action, "updated")
         self.assertEqual(self.client.tools["tool_id"]["content"], "version-two")
+
+    def test_hardening_reconciliation_is_idempotent(self):
+        changes = self.client.reconcile_hardening()
+        self.assertEqual(len(changes), 4)
+        self.assertFalse(self.client.admin_config["ENABLE_SIGNUP"])
+        self.assertEqual(self.client.admin_config["DEFAULT_USER_ROLE"], "pending")
+        self.assertFalse(self.client.task_config["ENABLE_FOLLOW_UP_GENERATION"])
+        self.assertEqual(self.client.rag_config["FILE_MAX_SIZE"], 50)
+        self.assertFalse(self.client.connections_config["ENABLE_DIRECT_CONNECTIONS"])
+        self.assertEqual(self.client.reconcile_hardening(), [])
 
 
 if __name__ == "__main__":

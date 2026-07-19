@@ -28,7 +28,53 @@ services:
       WEBUI_ADMIN_EMAIL: ${OPEN_WEBUI_ADMIN_EMAIL:-admin@blacksite.local}
       WEBUI_ADMIN_PASSWORD: ${OPEN_WEBUI_ADMIN_PASSWORD}
       WEBUI_ADMIN_NAME: ${OPEN_WEBUI_ADMIN_NAME:-Blacksite Admin}
+      WEBUI_URL: ${OPEN_WEBUI_PUBLIC_URL:-http://localhost:9000}
+      ENABLE_FOLLOW_UP_GENERATION: "false"
+      ENABLE_SIGNUP: "false"
+      DEFAULT_USER_ROLE: pending
+      ENABLE_PASSWORD_VALIDATION: "true"
+      PASSWORD_VALIDATION_REGEX_PATTERN: "^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{12,72}"
+      PASSWORD_VALIDATION_HINT: Minimum 12 characters with uppercase, lowercase, number, and special character.
+      JWT_EXPIRES_IN: ${OPEN_WEBUI_JWT_EXPIRES_IN:-24h}
+      CORS_ALLOW_ORIGIN: ${OPEN_WEBUI_CORS_ALLOW_ORIGIN:-http://localhost:9000;http://127.0.0.1:9000}
+      FORWARDED_ALLOW_IPS: ${OPEN_WEBUI_FORWARDED_ALLOW_IPS:-127.0.0.1}
+      XFRAME_OPTIONS: DENY
+      XCONTENT_TYPE: nosniff
+      REFERRER_POLICY: strict-origin-when-cross-origin
+      PERMISSIONS_POLICY: camera=(),microphone=(self),geolocation=()
+      CONTENT_SECURITY_POLICY_REPORT_ONLY: "default-src 'self'; img-src 'self' data: blob: https:; media-src 'self' blob:; connect-src 'self' https: wss:; script-src 'self'; style-src 'self' 'unsafe-inline'"
+      ENABLE_COMMUNITY_SHARING: "false"
+      ENABLE_ADMIN_EXPORT: "false"
+      ENABLE_DIRECT_CONNECTIONS: "false"
+      ENABLE_ADMIN_CHAT_ACCESS: "false"
+      ENABLE_OPENAI_API_PASSTHROUGH: "false"
       ENABLE_API_KEYS: "true"
+      ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS: "true"
+      API_KEYS_ALLOWED_ENDPOINTS: ${OPEN_WEBUI_API_KEYS_ALLOWED_ENDPOINTS:-/api/chat/completions,/api/v1/models,/api/models,/api/v1/tools,/api/v1/tasks,/api/v1/retrieval,/api/v1/auths/admin/config,/api/v1/configs/connections}
+      USER_PERMISSIONS_WORKSPACE_MODELS_ACCESS: "false"
+      USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ACCESS: "false"
+      USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS: "false"
+      USER_PERMISSIONS_WORKSPACE_TOOLS_IMPORT: "false"
+      USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS: "false"
+      ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS: "false"
+      AUDIT_LOG_LEVEL: METADATA
+      ENABLE_AUDIT_LOGS_FILE: "true"
+      AUDIT_LOGS_FILE_PATH: /app/backend/data/audit.log
+      AUDIT_LOG_FILE_ROTATION_SIZE: 10MB
+      ENABLE_AUDIT_STDOUT: "true"
+      LOG_FORMAT: json
+      GLOBAL_LOG_LEVEL: INFO
+      REQUESTS_VERIFY: "true"
+      AIOHTTP_CLIENT_SESSION_SSL: "true"
+      AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL: "true"
+      ENABLE_WEB_LOADER_SSL_VERIFICATION: "true"
+      ENABLE_RAG_LOCAL_WEB_FETCH: "false"
+      AIOHTTP_CLIENT_ALLOW_REDIRECTS: "false"
+      ENABLE_PROFILE_IMAGE_URL_FORWARDING: "false"
+      IFRAME_CSP: "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src 'none'"
+      RAG_FILE_MAX_SIZE: ${OPEN_WEBUI_RAG_FILE_MAX_SIZE:-50}
+      RAG_FILE_MAX_COUNT: ${OPEN_WEBUI_RAG_FILE_MAX_COUNT:-10}
+      RAG_ALLOWED_FILE_EXTENSIONS: ${OPEN_WEBUI_RAG_ALLOWED_FILE_EXTENSIONS:-.pdf,.txt,.md,.docx,.csv,.tsv,.json,.jsonl,.xml,.html,.nessus,.db,.zip,.yaml,.yml,.log}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OPENAI_API_BASE_URL: ${OPENAI_API_BASE_URL:-https://api.openai.com/v1}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -43,6 +89,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "host.containers.internal:host-gateway"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - open-webui-data:/app/backend/data
       - ${OPEN_WEBUI_INPUT_DIR:-./workspace/input}:/workspace/input:ro
@@ -65,12 +115,22 @@ services:
       OPEN_WEBUI_ADMIN_EMAIL: ${OPEN_WEBUI_ADMIN_EMAIL:-admin@blacksite.local}
       OPEN_WEBUI_ADMIN_PASSWORD: ${OPEN_WEBUI_ADMIN_PASSWORD}
       OPEN_WEBUI_TOOLS_TOKEN: ${OPEN_WEBUI_TOOLS_TOKEN:-}
+      OPEN_WEBUI_PUBLIC_URL: ${OPEN_WEBUI_PUBLIC_URL:-http://localhost:9000}
+      OPEN_WEBUI_JWT_EXPIRES_IN: ${OPEN_WEBUI_JWT_EXPIRES_IN:-24h}
+      OPEN_WEBUI_API_KEYS_ALLOWED_ENDPOINTS: ${OPEN_WEBUI_API_KEYS_ALLOWED_ENDPOINTS:-/api/chat/completions,/api/v1/models,/api/models,/api/v1/tools,/api/v1/tasks,/api/v1/retrieval,/api/v1/auths/admin/config,/api/v1/configs/connections}
+      OPEN_WEBUI_RAG_FILE_MAX_SIZE: ${OPEN_WEBUI_RAG_FILE_MAX_SIZE:-50}
+      OPEN_WEBUI_RAG_FILE_MAX_COUNT: ${OPEN_WEBUI_RAG_FILE_MAX_COUNT:-10}
+      OPEN_WEBUI_RAG_ALLOWED_FILE_EXTENSIONS: ${OPEN_WEBUI_RAG_ALLOWED_FILE_EXTENSIONS:-.pdf,.txt,.md,.docx,.csv,.tsv,.json,.jsonl,.xml,.html,.nessus,.db,.zip,.yaml,.yml,.log}
     volumes:
       - ./scripts/deploy-openwebui-tools.py:/deployer/deploy-openwebui-tools.py:ro
       - ./openwebui-tools:/tools:ro
     depends_on:
       open-webui:
         condition: service_healthy
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     networks:
       - tools
 
@@ -144,6 +204,7 @@ services:
       - "${BIND_ADDRESS:-127.0.0.1}:${CLOUDBEAVER_PORT:-9002}:8978"
     volumes:
       - cloudbeaver-workspace:/opt/cloudbeaver/workspace
+      - ${OPEN_WEBUI_INPUT_DIR:-./workspace/input}:/workspace/input:ro
     networks:
       - tools
 

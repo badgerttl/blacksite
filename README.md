@@ -80,11 +80,21 @@ either host location with `OPEN_WEBUI_INPUT_DIR` or `OPEN_WEBUI_OUTPUT_DIR` in `
 Open WebUI does not automatically ingest files from these directories; an installed
 tool or function must explicitly read them.
 
+CloudBeaver also receives the input directory read-only at `/workspace/input`, so
+SQLite databases placed there can be opened without copying them into a container.
+
 Importable tools for security-output parsing, bounded file reading, and read-only
-database access are in [`openwebui-tools/`](openwebui-tools/README.md). The parser
-supports 20 common formats and saves normalised results into `workspace/output/`.
+database access, and controlled output writing are in
+[`openwebui-tools/`](openwebui-tools/README.md). The parser
+supports common security formats, all documented Tenable export families, and
+schema-flexible CSV input, saving normalised results into `workspace/output/`.
 They are registered automatically by a one-shot Compose service after Open WebUI
 becomes healthy. Run `./blacksite tools` to force an immediate idempotent redeploy.
+
+Open WebUI uses a documented local hardening profile covering authentication,
+CORS, security headers, audit logging, SSRF controls, upload limits, API keys, and
+container privileges. See [`docs/openwebui-hardening.md`](docs/openwebui-hardening.md)
+for applied controls and the infrastructure-dependent controls intentionally deferred.
 
 ## Docker and Podman
 

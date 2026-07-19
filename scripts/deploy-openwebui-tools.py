@@ -18,7 +18,7 @@ TOOL_DEFINITIONS = (
         "blacksite_security_output_parser",
         "Blacksite Security Output Parser",
         "security_output_parser.py",
-        "Detect and normalise 20 common security-tool output formats.",
+        "Normalise common security-tool outputs, all documented Tenable export families, and arbitrary CSV files.",
     ),
     (
         "blacksite_workspace_files",
@@ -31,6 +31,12 @@ TOOL_DEFINITIONS = (
         "Blacksite Read-Only Database",
         "readonly_database.py",
         "Inspect and query local or configured SQL databases read-only.",
+    ),
+    (
+        "blacksite_workspace_writer",
+        "Blacksite Workspace Writer",
+        "workspace_writer.py",
+        "Safely write output files and export read-only SQLite query results.",
     ),
 )
 
@@ -128,6 +134,78 @@ class OpenWebUIClient:
             raise APIError(f"Failed to update {tool_id} (HTTP {update_status}): {response}")
         return "updated"
 
+    def reconcile_hardening(self) -> list[str]:
+        """Persist security defaults that Open WebUI stores in its database."""
+        changes = []
+        public_url = os.getenv("OPEN_WEBUI_PUBLIC_URL", "http://localhost:9000")
+        jwt_expiry = os.getenv("OPEN_WEBUI_JWT_EXPIRES_IN", "24h")
+        allowed_endpoints = os.getenv(
+            "OPEN_WEBUI_API_KEYS_ALLOWED_ENDPOINTS",
+            "/api/chat/completions,/api/v1/models,/api/models,/api/v1/tools,/api/v1/tasks,/api/v1/retrieval,/api/v1/auths/admin/config,/api/v1/configs/connections",
+        )
+
+        status, admin_config = self.request("GET", "/api/v1/auths/admin/config")
+        if status != 200 or not isinstance(admin_config, dict):
+            raise APIError(f"Failed to read admin configuration (HTTP {status}): {admin_config}")
+        admin_desired = {
+            "WEBUI_URL": public_url,
+            "ENABLE_SIGNUP": False,
+            "ENABLE_API_KEYS": True,
+            "ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS": True,
+            "API_KEYS_ALLOWED_ENDPOINTS": allowed_endpoints,
+            "DEFAULT_USER_ROLE": "pending",
+            "JWT_EXPIRES_IN": jwt_expiry,
+            "ENABLE_COMMUNITY_SHARING": False,
+        }
+        if any(admin_config.get(key) != value for key, value in admin_desired.items()):
+            admin_config.update(admin_desired)
+            update_status, response = self.request("POST", "/api/v1/auths/admin/config", admin_config)
+            if update_status != 200:
+                raise APIError(f"Failed to harden admin configuration (HTTP {update_status}): {response}")
+            changes.append("admin/access configuration")
+
+        status, task_config = self.request("GET", "/api/v1/tasks/config")
+        if status != 200 or not isinstance(task_config, dict):
+            raise APIError(f"Failed to read task configuration (HTTP {status}): {task_config}")
+        if task_config.get("ENABLE_FOLLOW_UP_GENERATION") is not False:
+            task_config["ENABLE_FOLLOW_UP_GENERATION"] = False
+            update_status, response = self.request("POST", "/api/v1/tasks/config/update", task_config)
+            if update_status != 200:
+                raise APIError(f"Failed to disable follow-up generation (HTTP {update_status}): {response}")
+            changes.append("follow-up generation disabled")
+
+        rag_desired = {
+            "FILE_MAX_SIZE": int(os.getenv("OPEN_WEBUI_RAG_FILE_MAX_SIZE", "50")),
+            "FILE_MAX_COUNT": int(os.getenv("OPEN_WEBUI_RAG_FILE_MAX_COUNT", "10")),
+            "ALLOWED_FILE_EXTENSIONS": [
+                item.strip()
+                for item in os.getenv(
+                    "OPEN_WEBUI_RAG_ALLOWED_FILE_EXTENSIONS",
+                    ".pdf,.txt,.md,.docx,.csv,.tsv,.json,.jsonl,.xml,.html,.nessus,.db,.zip,.yaml,.yml,.log",
+                ).split(",")
+                if item.strip()
+            ],
+        }
+        status, rag_config = self.request("GET", "/api/v1/retrieval/config")
+        if status != 200 or not isinstance(rag_config, dict):
+            raise APIError(f"Failed to read retrieval configuration (HTTP {status}): {rag_config}")
+        if any(rag_config.get(key) != value for key, value in rag_desired.items()):
+            update_status, response = self.request("POST", "/api/v1/retrieval/config/update", rag_desired)
+            if update_status != 200:
+                raise APIError(f"Failed to set upload limits (HTTP {update_status}): {response}")
+            changes.append("file upload limits")
+
+        status, connections_config = self.request("GET", "/api/v1/configs/connections")
+        if status != 200 or not isinstance(connections_config, dict):
+            raise APIError(f"Failed to read connections configuration (HTTP {status}): {connections_config}")
+        if connections_config.get("ENABLE_DIRECT_CONNECTIONS") is not False:
+            connections_config["ENABLE_DIRECT_CONNECTIONS"] = False
+            update_status, response = self.request("POST", "/api/v1/configs/connections", connections_config)
+            if update_status != 200:
+                raise APIError(f"Failed to disable direct connections (HTTP {update_status}): {response}")
+            changes.append("direct model connections disabled")
+        return changes
+
 
 def deploy() -> int:
     base_url = os.getenv("OPEN_WEBUI_URL", "http://open-webui:8080")
@@ -144,6 +222,13 @@ def deploy() -> int:
                 "Set OPEN_WEBUI_ADMIN_EMAIL and OPEN_WEBUI_ADMIN_PASSWORD, or OPEN_WEBUI_TOOLS_TOKEN"
             )
         client.sign_in(email, password)
+
+    changes = client.reconcile_hardening()
+    if changes:
+        for change in changes:
+            print(f"hardened  {change}", flush=True)
+    else:
+        print("unchanged hardened Open WebUI configuration", flush=True)
 
     for tool_id, name, filename, description in TOOL_DEFINITIONS:
         path = (tools_directory / filename).resolve()

@@ -1,9 +1,9 @@
 """
 title: Blacksite Security Output Parser
 author: Blacksite
-description: Detect and normalise 20 common security-tool output formats from the mounted Blacksite workspace.
+description: Detect and normalise common security-tool outputs, all documented Tenable export families, and arbitrary CSV files.
 required_open_webui_version: 0.10.0
-version: 1.0.0
+version: 1.1.0
 license: MIT
 """
 
@@ -17,6 +17,7 @@ import os
 import re
 import zipfile
 from collections import Counter
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable
 from xml.etree import ElementTree as ET
@@ -29,7 +30,48 @@ SUPPORTED_FORMATS = [
     "zap_json", "nikto_xml", "nuclei_jsonl", "ffuf_json", "gobuster_text",
     "dirsearch_json", "sqlmap_csv", "metasploit_xml", "bloodhound_json_zip",
     "trivy_json", "grype_json", "semgrep_json", "checkov_json", "gitleaks_json", "sarif_json",
+    "tenable_csv", "tenable_json", "tenable_was_xml", "tenable_html", "tenable_pdf",
+    "tenable_db", "tenable_policy_json", "tenable_timing_csv", "tenable_nessus_zip", "generic_csv",
 ]
+
+
+NORMALIZED_FIELDS = {
+    "category", "title", "severity", "host", "port", "protocol", "location",
+    "description", "evidence", "identifiers", "remediation",
+}
+
+
+class _TableHTMLParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.tables: list[list[list[str]]] = []
+        self._table: list[list[str]] | None = None
+        self._row: list[str] | None = None
+        self._cell: list[str] | None = None
+        self.text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag == "table": self._table = []
+        elif tag == "tr" and self._table is not None: self._row = []
+        elif tag in {"td", "th"} and self._row is not None: self._cell = []
+
+    def handle_data(self, data: str) -> None:
+        value = data.strip()
+        if not value: return
+        self.text.append(value)
+        if self._cell is not None: self._cell.append(value)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in {"td", "th"} and self._cell is not None and self._row is not None:
+            self._row.append(" ".join(self._cell)); self._cell = None
+        elif tag == "tr" and self._row is not None and self._table is not None:
+            if self._row: self._table.append(self._row)
+            self._row = None
+        elif tag == "table" and self._table is not None:
+            if self._table: self.tables.append(self._table)
+            self._table = None
 
 
 class Tools:
@@ -107,6 +149,206 @@ class Tools:
             raise ValueError("XML document types and entities are not permitted")
         return ET.fromstring(raw)
 
+    @staticmethod
+    def _flatten(value: Any, prefix: str = "") -> dict[str, Any]:
+        flattened: dict[str, Any] = {}
+        if isinstance(value, dict):
+            for key, item in value.items():
+                name = f"{prefix}.{key}" if prefix else str(key)
+                if isinstance(item, dict): flattened.update(Tools._flatten(item, name))
+                elif isinstance(item, list) and item and all(isinstance(entry, dict) for entry in item):
+                    flattened[name] = item
+                else: flattened[name] = item
+        else:
+            flattened[prefix or "value"] = value
+        return flattened
+
+    @staticmethod
+    def _column_key(value: Any) -> str:
+        return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+    def _normalise_row(
+        self,
+        row: dict[str, Any],
+        tool: str,
+        mapping: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        flat = self._flatten(row)
+        keyed = {self._column_key(key): value for key, value in flat.items()}
+        aliases = {
+            "category": ["category", "pluginfamily", "pluginfamilyname", "family", "type", "findingtype", "definitionfamily"],
+            "title": ["title", "name", "pluginname", "finding", "vulnerability", "checkname", "definitionname", "definitionpluginname"],
+            "severity": ["severity", "risk", "riskfactor", "level", "severityname", "definitionseverity", "definitionseverityname"],
+            "host": ["host", "hostname", "ip", "ipaddress", "dnsname", "assetname", "assethostname", "assetipv4", "assetipaddresses", "assetipv4addresses", "assetfqdn", "assetipv4s"],
+            "port": ["port", "portnumber", "serviceport"],
+            "protocol": ["protocol", "proto", "transport"],
+            "location": ["location", "url", "uri", "path", "endpoint", "requesturl", "asseturl"],
+            "description": ["description", "synopsis", "details", "definitiondescription", "complianceauditdescription"],
+            "evidence": ["evidence", "output", "pluginoutput", "proof", "request", "response", "vulnerabilityoutput"],
+            "remediation": ["remediation", "solution", "recommendation", "resolution", "definitionsolution"],
+            "identifiers": ["identifiers", "cve", "cves", "cwe", "cwes", "pluginid", "definitionid", "definitionpluginid", "findingid"],
+        }
+        mapping = mapping or {}
+
+        def populated(value: Any) -> bool:
+            return value is not None and value != "" and value != [] and value != {}
+
+        def pick(field: str) -> Any:
+            explicit = mapping.get(field)
+            if explicit is not None: return flat.get(explicit, keyed.get(self._column_key(explicit)))
+            for alias in aliases[field]:
+                if self._column_key(alias) in keyed and populated(keyed[self._column_key(alias)]):
+                    return keyed[self._column_key(alias)]
+            return ""
+
+        identifiers_value = pick("identifiers")
+        if isinstance(identifiers_value, list): identifiers = identifiers_value
+        else:
+            identifiers = re.findall(r"(?:CVE|CWE)-\d{1,7}(?:-\d+)?", str(identifiers_value), flags=re.I)
+            if identifiers_value and not identifiers: identifiers = [str(identifiers_value)]
+        used_keys = {self._column_key(source) for source in mapping.values()}
+        for field_aliases in aliases.values(): used_keys.update(self._column_key(alias) for alias in field_aliases)
+        evidence_extra = {}
+        for key, value in flat.items():
+            if self._column_key(key) in used_keys or not populated(value): continue
+            if re.search(r"password|passwd|secret|token|private.?key|api.?key", key, re.I): value = "[REDACTED]"
+            evidence_extra[key] = value
+            if len(evidence_extra) >= 20: break
+        evidence = pick("evidence")
+        if evidence_extra: evidence = {"primary": evidence, "additional_columns": evidence_extra}
+        return self._finding(
+            tool, category=pick("category"), title=pick("title") or "CSV row",
+            severity=pick("severity"), host=pick("host"), port=pick("port"),
+            protocol=pick("protocol"), location=pick("location"), description=pick("description"),
+            evidence=evidence, identifiers=identifiers, remediation=pick("remediation"),
+        )
+
+    @staticmethod
+    def _read_csv(path: Path, delimiter: str = "auto") -> list[dict[str, str]]:
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+        if delimiter == "auto":
+            try: selected = csv.Sniffer().sniff(text[:16_384], delimiters=",;\t|").delimiter
+            except csv.Error: selected = ","
+        else:
+            selected = {"tab": "\t", "\\t": "\t"}.get(delimiter.lower(), delimiter)
+            if len(selected) != 1: raise ValueError("delimiter must be auto or one character")
+        return [dict(row) for row in csv.DictReader(io.StringIO(text), delimiter=selected)]
+
+    def _parse_generic_csv_file(
+        self, path: Path, mapping: dict[str, str] | None = None, delimiter: str = "auto", tool: str = "Generic CSV"
+    ) -> list[dict[str, Any]]:
+        return [self._normalise_row(row, tool, mapping) for row in self._read_csv(path, delimiter)]
+
+    def _parse_tenable_csv(self, path: Path) -> list[dict[str, Any]]:
+        return self._parse_generic_csv_file(path, tool="Tenable")
+
+    def _parse_tenable_timing_csv(self, path: Path) -> list[dict[str, Any]]:
+        out = []
+        for row in self._read_csv(path):
+            keyed = {self._column_key(key): value for key, value in row.items()}
+            host = keyed.get("hostname") or keyed.get("fqdn") or keyed.get("ip") or keyed.get("ipaddress")
+            out.append(self._finding("Tenable Nessus", category="scan-timing", title="Scan timing record", severity="info", host=host, evidence=row))
+        return out
+
+    def _parse_nessus_root(self, root: ET.Element) -> list[dict[str, Any]]:
+        out = []
+        for report_host in root.findall(".//ReportHost"):
+            properties = {tag.get("name", ""): tag.text or "" for tag in report_host.findall("HostProperties/tag")}
+            host = report_host.get("name", "") or properties.get("host-ip") or properties.get("host-fqdn")
+            for item in report_host.findall("ReportItem"):
+                ids = []
+                for field in ("cve", "cwe", "bid", "xref"):
+                    for node in item.findall(field):
+                        if node.text: ids.extend(part.strip() for part in node.text.split(",") if part.strip())
+                plugin_id = item.get("pluginID") or item.findtext("plugin_id")
+                if plugin_id: ids.append(plugin_id)
+                out.append(self._finding("Tenable Nessus", category=item.get("pluginFamily"), title=item.get("pluginName"), severity=item.get("severity") or item.findtext("risk_factor"), host=host, port=item.get("port"), protocol=item.get("protocol"), description=item.findtext("synopsis") or item.findtext("description"), evidence=item.findtext("plugin_output"), identifiers=ids, remediation=item.findtext("solution")))
+        return out
+
+    def _parse_tenable_json(self, path: Path) -> list[dict[str, Any]]:
+        data = self._json(path)
+        candidates: list[dict[str, Any]] = []
+
+        def collect(value: Any) -> None:
+            if isinstance(value, list):
+                for item in value: collect(item)
+            elif isinstance(value, dict):
+                keys = {self._column_key(key) for key in value}
+                if keys & {"findingid", "plugin", "pluginid", "severity", "vulnerability", "definition"}:
+                    candidates.append(value)
+                else:
+                    for item in value.values(): collect(item)
+
+        collect(data)
+        if not candidates and isinstance(data, dict):
+            return [self._finding("Tenable", category="policy", title=data.get("name") or data.get("uuid") or "Tenable JSON export", severity="info", description=data)]
+        return [self._normalise_row(item, "Tenable") for item in candidates]
+
+    def _parse_tenable_was_xml(self, path: Path) -> list[dict[str, Any]]:
+        root, out = self._xml(path), []
+        for node in root.iter():
+            tag = node.tag.rsplit("}", 1)[-1].lower()
+            if tag not in {"finding", "vulnerability", "issue", "result"}: continue
+            row = {child.tag.rsplit("}", 1)[-1]: child.text or "" for child in node if len(child) == 0}
+            row.update(node.attrib)
+            if row: out.append(self._normalise_row(row, "Tenable WAS"))
+        if not out:
+            out.append(self._finding("Tenable", category="xml-report", title="Tenable XML report", severity="info", description="No structured finding nodes were present."))
+        return out
+
+    def _parse_tenable_html(self, path: Path) -> list[dict[str, Any]]:
+        parser = _TableHTMLParser()
+        parser.feed(path.read_text(encoding="utf-8-sig", errors="replace"))
+        out = []
+        for table in parser.tables:
+            if len(table) < 2: continue
+            width = len(table[0])
+            if width < 2: continue
+            headers = [header or f"column_{index + 1}" for index, header in enumerate(table[0])]
+            for values in table[1:]:
+                row = {headers[index]: values[index] if index < len(values) else "" for index in range(width)}
+                out.append(self._normalise_row(row, "Tenable"))
+        if not out:
+            text = "\n".join(parser.text)
+            out.append(self._finding("Tenable", category="html-report", title="Tenable HTML report", severity="info", evidence=text[:4000]))
+        return out
+
+    def _parse_tenable_pdf(self, path: Path) -> list[dict[str, Any]]:
+        try:
+            from pypdf import PdfReader
+        except ImportError as error:
+            raise RuntimeError("Tenable PDF parsing requires pypdf, which is included in the Open WebUI image") from error
+        out = []
+        reader = PdfReader(str(path))
+        for index, page in enumerate(reader.pages[:500], 1):
+            text = (page.extract_text() or "").strip()
+            if text:
+                out.append(self._finding("Tenable", category="pdf-report", title=f"Tenable report page {index}", severity="info", location=f"page:{index}", evidence=text))
+        return out or [self._finding("Tenable", category="pdf-report", title="Tenable PDF report contains no extractable text", severity="info")]
+
+    def _parse_tenable_db(self, path: Path) -> list[dict[str, Any]]:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""): digest.update(chunk)
+        return [self._finding("Tenable Nessus", category="encrypted-scan-database", title="Encrypted Nessus DB export", severity="info", description="Tenable documents .db as a proprietary encrypted database. Import it into Nessus with its export password, then export as .nessus, CSV, HTML, or PDF for finding-level parsing.", evidence={"filename": path.name, "size_bytes": path.stat().st_size, "sha256": digest.hexdigest()})]
+
+    def _parse_tenable_nessus_zip(self, path: Path) -> list[dict[str, Any]]:
+        out, expanded = [], 0
+        with zipfile.ZipFile(path) as archive:
+            members = [member for member in archive.infolist() if not member.is_dir()]
+            if len(members) > 1000: raise ValueError("Tenable archive contains too many members")
+            for member in members:
+                expanded += member.file_size
+                if expanded > self.valves.max_input_bytes or member.file_size > self.valves.max_input_bytes:
+                    raise ValueError("Tenable archive expands beyond the configured size limit")
+                if not member.filename.lower().endswith((".nessus", ".xml")): continue
+                raw = archive.read(member)
+                if b"<!DOCTYPE" in raw.upper() or b"<!ENTITY" in raw.upper(): raise ValueError("XML entities are not permitted")
+                root = ET.fromstring(raw)
+                if root.tag.rsplit("}", 1)[-1].lower().startswith("nessusclientdata"):
+                    out.extend(self._parse_nessus_root(root))
+        return out or [self._finding("Tenable Security Center", category="scan-archive", title="Tenable scan archive", severity="info", description="No embedded Nessus XML findings were present.")]
+
     def _parse_nmap(self, path: Path) -> list[dict[str, Any]]:
         root, out = self._xml(path), []
         for host in root.findall(".//host"):
@@ -137,13 +379,7 @@ class Tools:
         return out
 
     def _parse_nessus(self, path: Path) -> list[dict[str, Any]]:
-        root, out = self._xml(path), []
-        for report_host in root.findall(".//ReportHost"):
-            host = report_host.get("name", "")
-            for item in report_host.findall("ReportItem"):
-                ids = [x for x in [item.findtext("cve"), item.findtext("cwe"), item.findtext("plugin_id")] if x]
-                out.append(self._finding("Nessus", category=item.get("pluginFamily"), title=item.get("pluginName"), severity=item.get("severity"), host=host, port=item.get("port"), protocol=item.get("protocol"), description=item.findtext("synopsis") or item.findtext("description"), evidence=item.findtext("plugin_output"), identifiers=ids, remediation=item.findtext("solution")))
-        return out
+        return self._parse_nessus_root(self._xml(path))
 
     def _parse_openvas(self, path: Path) -> list[dict[str, Any]]:
         root, out = self._xml(path), []
@@ -315,7 +551,19 @@ class Tools:
         name = path.name.lower()
         sample = path.read_bytes()[:200_000].lstrip()
         text = sample.decode("utf-8", errors="ignore")
-        if path.suffix.lower() == ".zip": return "bloodhound_json_zip"
+        suffix = path.suffix.lower()
+        if suffix == ".db": return "tenable_db"
+        if suffix == ".pdf" or sample.startswith(b"%PDF"): return "tenable_pdf"
+        if suffix in {".html", ".htm"} or text.lower().startswith(("<!doctype html", "<html")):
+            return "tenable_html" if "tenable" in text.lower() or "nessus" in text.lower() else "unknown"
+        if suffix == ".zip":
+            try:
+                with zipfile.ZipFile(path) as archive:
+                    names = [member.filename.lower() for member in archive.infolist()]
+                if any(member.endswith(".nessus") for member in names): return "tenable_nessus_zip"
+            except zipfile.BadZipFile:
+                pass
+            return "bloodhound_json_zip"
         if sample.startswith(b"<"):
             lower = text.lower()
             if "<nmaprun" in lower: return "masscan_xml" if "masscan" in lower else "nmap_xml"
@@ -323,12 +571,23 @@ class Tools:
             if "<issues" in lower and "burp" in lower: return "burp_xml"
             if "<niktoscan" in lower: return "nikto_xml"
             if "<metasploit" in lower or "<hosts>" in lower: return "metasploit_xml"
+            if "tenable" in lower or "<vulnerabilities" in lower or "<vulnerability" in lower: return "tenable_was_xml"
             if "<report" in lower or "<get_reports" in lower: return "openvas_xml"
-        if name.endswith(".csv"):
-            return "sqlmap_csv"
+        if suffix == ".csv":
+            try:
+                rows = self._read_csv(path)
+                headers = {self._column_key(key) for key in (rows[0].keys() if rows else [])}
+            except (csv.Error, UnicodeError):
+                headers = set()
+            if {"scanstart", "scanend"} & headers and {"hostname", "ip", "ipaddress", "fqdn"} & headers:
+                return "tenable_timing_csv"
+            if {"pluginid", "pluginname", "risk", "riskfactor", "definitionpluginid"} & headers and {"host", "assetipaddresses", "assetname", "ipaddress"} & headers:
+                return "tenable_csv"
+            if {"target", "place", "parameter", "payload"}.issubset(headers): return "sqlmap_csv"
+            return "generic_csv"
         if name.endswith((".jsonl", ".ndjson")) or (text.startswith("{") and "template-id" in text.splitlines()[0]):
             return "nuclei_jsonl"
-        try: data = json.loads(text)
+        try: data = self._json(path) if suffix == ".json" else json.loads(text)
         except (json.JSONDecodeError, UnicodeDecodeError):
             return "gobuster_text" if "(Status:" in text else "unknown"
         if isinstance(data, dict):
@@ -342,17 +601,21 @@ class Tools:
             if "results" in data and "config" in data: return "ffuf_json"
             if "results" in data and isinstance(data["results"], dict) and "failed_checks" in data["results"]: return "checkov_json"
             if "data" in data and "meta" in data: return "bloodhound_json_zip"
+            keys = {self._column_key(key) for key in data}
+            if keys & {"findingid", "plugin", "pluginid", "vulnerabilities", "vulnerability", "definition"}: return "tenable_json"
+            if "settings" in data and ("plugins" in data or "uuid" in data): return "tenable_policy_json"
             if "results" in data: return "dirsearch_json"
             if "findings" in data or "leaks" in data: return "gitleaks_json"
         if isinstance(data, list) and data:
             first = data[0]
-            if "RuleID" in first and ("File" in first or "Secret" in first): return "gitleaks_json"
+            if isinstance(first, dict) and "RuleID" in first and ("File" in first or "Secret" in first): return "gitleaks_json"
+            if isinstance(first, dict) and {self._column_key(key) for key in first} & {"findingid", "plugin", "pluginid", "definition"}: return "tenable_json"
             if isinstance(first, dict) and "results" in first: return "checkov_json"
             if isinstance(first, dict) and ("status" in first or "path" in first): return "dirsearch_json"
         return "unknown"
 
     async def list_supported_security_formats(self) -> str:
-        """List the 20 security output formats this parser supports.
+        """List every security output format this parser supports.
 
         :return: JSON list of accepted format identifiers.
         """
@@ -366,6 +629,64 @@ class Tools:
         """
         detected = self._detect(self._safe_input(relative_path))
         return json.dumps({"path": relative_path, "format": detected, "supported": detected in SUPPORTED_FORMATS}, indent=2)
+
+    def _format_response(
+        self,
+        relative_path: str,
+        path: Path,
+        selected: str,
+        parsed: list[dict[str, Any]],
+        save_normalized: bool,
+        max_findings: int,
+    ) -> str:
+        limit = max(1, min(max_findings, self.valves.max_findings))
+        truncated = len(parsed) > limit
+        findings = parsed[:limit]
+        payload = {
+            "source": relative_path,
+            "format": selected,
+            "finding_count": len(findings),
+            "truncated": truncated,
+            "severity_counts": dict(Counter(item["severity"] for item in findings)),
+            "findings": findings,
+        }
+        saved_path = ""
+        if save_normalized:
+            stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", path.stem)[:100]
+            output = self._safe_output(f"{stem}.{selected}.normalized.json")
+            output.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            saved_path = f"/workspace/output/{output.name}"
+        response = {key: value for key, value in payload.items() if key != "findings"}
+        response["saved_output"] = saved_path
+        response["preview"] = findings[: self.valves.preview_findings]
+        return json.dumps(response, indent=2, ensure_ascii=False)
+
+    async def parse_generic_csv(
+        self,
+        relative_path: str,
+        column_mapping_json: str = "{}",
+        delimiter: str = "auto",
+        save_normalized: bool = True,
+        max_findings: int = 500,
+    ) -> str:
+        """Normalise an arbitrary CSV/TSV file using aliases or an explicit target-to-source column map.
+
+        :param relative_path: CSV file path relative to the mounted input workspace.
+        :param column_mapping_json: JSON object mapping normalized fields (for example title, severity, host) to source column names.
+        :param delimiter: auto, tab, or a single delimiter character.
+        :param save_normalized: Save bounded normalized rows under /workspace/output.
+        :param max_findings: Maximum rows parsed and saved, capped by the administrator valve.
+        :return: JSON summary, preview, truncation state, and saved output path.
+        """
+        path = self._safe_input(relative_path)
+        mapping = json.loads(column_mapping_json or "{}")
+        if not isinstance(mapping, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in mapping.items()):
+            raise ValueError("column_mapping_json must be a JSON object of target-to-source strings")
+        unsupported = sorted(set(mapping) - NORMALIZED_FIELDS)
+        if unsupported:
+            raise ValueError(f"Unsupported normalized fields: {', '.join(unsupported)}")
+        parsed = self._parse_generic_csv_file(path, mapping, delimiter)
+        return self._format_response(relative_path, path, "generic_csv", parsed, save_normalized, max_findings)
 
     async def parse_security_output(
         self,
@@ -395,28 +716,14 @@ class Tools:
             "trivy_json": self._parse_trivy, "grype_json": self._parse_grype,
             "semgrep_json": self._parse_semgrep, "checkov_json": self._parse_checkov,
             "gitleaks_json": self._parse_gitleaks, "sarif_json": self._parse_sarif,
+            "tenable_csv": self._parse_tenable_csv, "tenable_json": self._parse_tenable_json,
+            "tenable_was_xml": self._parse_tenable_was_xml, "tenable_html": self._parse_tenable_html,
+            "tenable_pdf": self._parse_tenable_pdf, "tenable_db": self._parse_tenable_db,
+            "tenable_policy_json": self._parse_tenable_json, "tenable_timing_csv": self._parse_tenable_timing_csv,
+            "tenable_nessus_zip": self._parse_tenable_nessus_zip,
+            "generic_csv": self._parse_generic_csv_file,
         }
         if selected not in parsers:
             raise ValueError(f"Unsupported or undetected format: {selected}")
-        limit = max(1, min(max_findings, self.valves.max_findings))
         parsed = parsers[selected](path)
-        truncated = len(parsed) > limit
-        findings = parsed[:limit]
-        payload = {
-            "source": relative_path,
-            "format": selected,
-            "finding_count": len(findings),
-            "truncated": truncated,
-            "severity_counts": dict(Counter(item["severity"] for item in findings)),
-            "findings": findings,
-        }
-        saved_path = ""
-        if save_normalized:
-            stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", path.stem)[:100]
-            output = self._safe_output(f"{stem}.{selected}.normalized.json")
-            output.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-            saved_path = f"/workspace/output/{output.name}"
-        response = {key: value for key, value in payload.items() if key != "findings"}
-        response["saved_output"] = saved_path
-        response["preview"] = findings[: self.valves.preview_findings]
-        return json.dumps(response, indent=2, ensure_ascii=False)
+        return self._format_response(relative_path, path, selected, parsed, save_normalized, max_findings)
