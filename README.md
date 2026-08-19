@@ -11,6 +11,7 @@ Podman Compose. All application images and local builds support `linux/amd64` an
 | Open WebUI | http://localhost:9000 | chats, users, settings |
 | Hoppscotch | http://localhost:9001 | PostgreSQL database |
 | Hoppscotch admin | http://localhost:9001/admin | same database |
+| Proxyscotch | http://localhost:9159 | optional Hoppscotch CORS proxy |
 | CloudBeaver | http://localhost:9002 | workspace and connections |
 | CyberChef | http://localhost:9003 | browser local storage |
 | Reverse Shell Generator | http://localhost:9004 | browser local storage |
@@ -29,6 +30,26 @@ The stack binds to `127.0.0.1` by default. It does not expose the tools to the L
 The first build is large because it compiles the pinned HackTricks snapshot. Later
 starts reuse the local image and persistent volumes. Run `./blacksite urls` at any
 time to print the entry points.
+
+### Hoppscotch proxy for browser CORS
+
+Hoppscotch runs in the browser, so requests to APIs that do not allow the
+Hoppscotch origin may be blocked by browser CORS policy. Start the optional
+Proxyscotch service when you need Hoppscotch to send those API requests through a
+local proxy:
+
+```sh
+./blacksite up --hoppscotch-proxy
+```
+
+Then set Hoppscotch's Settings > Interceptors > Proxy URL to
+`http://localhost:9159` and enable the proxy interceptor. A direct browser visit
+to that URL redirects to `hoppscotch.io`; Hoppscotch uses it by sending local
+`POST` requests. The proxy is bound to `127.0.0.1` by default and uses the
+generated `PROXYSCOTCH_TOKEN` value passed to Hoppscotch as
+`VITE_PROXYSCOTCH_ACCESS_TOKEN`. See
+[`docs/hoppscotch-proxy.md`](docs/hoppscotch-proxy.md) for troubleshooting and
+LAN exposure notes.
 
 ### Local LLM in a container
 
@@ -95,6 +116,9 @@ Open WebUI uses a documented local hardening profile covering authentication,
 CORS, security headers, audit logging, SSRF controls, upload limits, API keys, and
 container privileges. See [`docs/openwebui-hardening.md`](docs/openwebui-hardening.md)
 for applied controls and the infrastructure-dependent controls intentionally deferred.
+
+Run `./blacksite doctor` to check common local configuration issues, including
+Hoppscotch backend reachability and accidental non-local service binds.
 
 ## Docker and Podman
 

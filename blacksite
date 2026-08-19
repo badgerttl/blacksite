@@ -41,7 +41,7 @@ ensure_secret() {
   local key="$1" bytes="$2"
   if ! grep -q "^${key}=" .env; then
     printf '%s=%s\n' "$key" "$(random_hex "$bytes")" >> .env
-  elif grep -q "^${key}=GENERATE_ME$" .env; then
+  elif grep -q "^${key}=GENERATE_ME$" .env || grep -q "^${key}=$" .env; then
     set_env "$key" "$(random_hex "$bytes")"
   fi
 }
@@ -66,6 +66,10 @@ init() {
   ensure_secret HOPPSCOTCH_DB_PASSWORD 24
   ensure_secret HOPPSCOTCH_DATA_ENCRYPTION_KEY 16
   ensure_secret HOPPSCOTCH_SESSION_SECRET 32
+  ensure_secret PROXYSCOTCH_TOKEN 24
+  ensure_default PROXYSCOTCH_ALLOWED_ORIGINS 'http://localhost:9001,http://127.0.0.1:9001'
+  ensure_default PROXYSCOTCH_BANNED_OUTPUTS ''
+  ensure_default PROXYSCOTCH_BANNED_DESTS '169.254.169.254,metadata.google.internal,100.100.100.200'
   ensure_secret SEARXNG_SECRET_KEY 32
   printf 'Configuration ready: %s/.env\n' "$ROOT_DIR"
 }
@@ -81,26 +85,39 @@ ensure_env() {
   ensure_secret HOPPSCOTCH_DB_PASSWORD 24
   ensure_secret HOPPSCOTCH_DATA_ENCRYPTION_KEY 16
   ensure_secret HOPPSCOTCH_SESSION_SECRET 32
+  ensure_secret PROXYSCOTCH_TOKEN 24
+  ensure_default PROXYSCOTCH_ALLOWED_ORIGINS 'http://localhost:9001,http://127.0.0.1:9001'
+  ensure_default PROXYSCOTCH_BANNED_OUTPUTS ''
+  ensure_default PROXYSCOTCH_BANNED_DESTS '169.254.169.254,metadata.google.internal,100.100.100.200'
   ensure_secret SEARXNG_SECRET_KEY 32
   if grep -q '=GENERATE_ME' .env; then
     die 'replace all GENERATE_ME values in .env'
   fi
 }
 
+env_value() {
+  local key="$1" default="${2:-}"
+  local value
+  value="$(sed -n "s/^${key}=//p" .env | tail -1)"
+  printf '%s' "${value:-$default}"
+}
+
 urls() {
   ensure_env
   local host='localhost'
-  local open_webui_port hoppscotch_port cloudbeaver_port revshell_port cyberchef_port hacktricks_port searxng_port
-  open_webui_port="$(sed -n 's/^OPEN_WEBUI_PORT=//p' .env)"
-  hoppscotch_port="$(sed -n 's/^HOPPSCOTCH_PORT=//p' .env)"
-  cloudbeaver_port="$(sed -n 's/^CLOUDBEAVER_PORT=//p' .env)"
-  revshell_port="$(sed -n 's/^REVSHELL_PORT=//p' .env)"
-  cyberchef_port="$(sed -n 's/^CYBERCHEF_PORT=//p' .env)"
-  hacktricks_port="$(sed -n 's/^HACKTRICKS_PORT=//p' .env)"
-  searxng_port="$(sed -n 's/^SEARXNG_PORT=//p' .env)"
+  local open_webui_port hoppscotch_port proxyscotch_port cloudbeaver_port revshell_port cyberchef_port hacktricks_port searxng_port
+  open_webui_port="$(env_value OPEN_WEBUI_PORT 9000)"
+  hoppscotch_port="$(env_value HOPPSCOTCH_PORT 9001)"
+  proxyscotch_port="$(env_value PROXYSCOTCH_PORT 9159)"
+  cloudbeaver_port="$(env_value CLOUDBEAVER_PORT 9002)"
+  revshell_port="$(env_value REVSHELL_PORT 9004)"
+  cyberchef_port="$(env_value CYBERCHEF_PORT 9003)"
+  hacktricks_port="$(env_value HACKTRICKS_PORT 9005)"
+  searxng_port="$(env_value SEARXNG_PORT 9006)"
   printf '%-15s http://%s:%s\n' 'Open WebUI' "$host" "$open_webui_port"
   printf '%-15s http://%s:%s\n' 'Hoppscotch' "$host" "$hoppscotch_port"
   printf '%-15s http://%s:%s/admin\n' 'Hopp Admin' "$host" "$hoppscotch_port"
+  printf '%-15s http://%s:%s %s\n' 'Proxyscotch' "$host" "$proxyscotch_port" '(optional; use --hoppscotch-proxy)'
   printf '%-15s http://%s:%s\n' 'CloudBeaver' "$host" "$cloudbeaver_port"
   printf '%-15s http://%s:%s\n' 'CyberChef' "$host" "$cyberchef_port"
   printf '%-15s http://%s:%s\n' 'RevShell' "$host" "$revshell_port"
@@ -108,16 +125,90 @@ urls() {
   printf '%-15s http://%s:%s\n' 'SearXNG' "$host" "$searxng_port"
 }
 
+curl_check() {
+  local name="$1" url="$2" expected="${3:-2..3}"
+  local code
+  code="$(curl -ksS -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null || true)"
+  case "$expected:$code" in
+    2..3:2*|2..3:3*|2..4:2*|2..4:3*|2..4:4*)
+      printf '[ok]   %-24s %s (%s)\n' "$name" "$url" "$code"
+      return 0
+      ;;
+    *)
+      printf '[fail] %-24s %s (%s)\n' "$name" "$url" "${code:-no response}"
+      return 1
+      ;;
+  esac
+}
+
+doctor() {
+  ensure_env
+  local failed=0 bind_address hoppscotch_port proxyscotch_port hoppscotch_public hoppscotch_ws proxy_running
+  bind_address="$(env_value BIND_ADDRESS 127.0.0.1)"
+  hoppscotch_port="$(env_value HOPPSCOTCH_PORT 9001)"
+  proxyscotch_port="$(env_value PROXYSCOTCH_PORT 9159)"
+  hoppscotch_public="$(env_value HOPPSCOTCH_PUBLIC_URL "http://localhost:${hoppscotch_port}")"
+  hoppscotch_ws="$(env_value HOPPSCOTCH_WS_URL "ws://localhost:${hoppscotch_port}")"
+
+  printf 'Blacksite diagnostics\n'
+  if [[ "$bind_address" == "127.0.0.1" || "$bind_address" == "localhost" ]]; then
+    printf '[ok]   %-24s %s\n' 'Bind address' "$bind_address"
+  else
+    printf '[warn] %-24s %s exposes published services beyond localhost\n' 'Bind address' "$bind_address"
+  fi
+
+  [[ "$hoppscotch_public" == *":${hoppscotch_port}"* ]] || {
+    printf '[warn] %-24s %s does not contain HOPPSCOTCH_PORT=%s\n' 'Hoppscotch URL' "$hoppscotch_public" "$hoppscotch_port"
+  }
+  [[ "$hoppscotch_ws" == ws://* || "$hoppscotch_ws" == wss://* ]] || {
+    printf '[fail] %-24s %s must start with ws:// or wss://\n' 'Hoppscotch WS URL' "$hoppscotch_ws"
+    failed=1
+  }
+
+  curl_check 'Hoppscotch app' "http://localhost:${hoppscotch_port}" || failed=1
+  curl_check 'Hoppscotch admin' "http://localhost:${hoppscotch_port}/admin" || failed=1
+  curl_check 'Hoppscotch backend' "http://localhost:${hoppscotch_port}/backend/ping" || failed=1
+
+  proxy_running="$(compose -f compose.yaml --profile hoppscotch-proxy ps --services --filter status=running 2>/dev/null | grep -x 'proxyscotch' || true)"
+  if [[ -n "$proxy_running" ]]; then
+    curl_check 'Proxyscotch' "http://localhost:${proxyscotch_port}" '2..4' || failed=1
+  else
+    printf '[skip] %-24s not running; start with --hoppscotch-proxy\n' 'Proxyscotch'
+  fi
+
+  return "$failed"
+}
+
 with_ollama=false
+with_hoppscotch_proxy=false
 args=()
 for arg in "$@"; do
-  if [[ "$arg" == '--local-llm' ]]; then
-    with_ollama=true
-  else
-    args+=("$arg")
-  fi
+  case "$arg" in
+    --local-llm)
+      with_ollama=true
+      ;;
+    --hoppscotch-proxy)
+      with_hoppscotch_proxy=true
+      ;;
+    *)
+      args+=("$arg")
+      ;;
+  esac
 done
 set -- "${args[@]}"
+
+compose_files=(-f compose.yaml)
+if $with_ollama; then
+  compose_files+=(-f compose.ollama.yaml)
+fi
+
+compose_stack() {
+  local args=("${compose_files[@]}")
+  if $with_hoppscotch_proxy; then
+    args+=(--profile hoppscotch-proxy)
+  fi
+  compose "${args[@]}" "$@"
+}
 
 command_name="${1:-help}"
 shift || true
@@ -128,27 +219,22 @@ case "$command_name" in
     ;;
   up)
     ensure_env
-    if $with_ollama; then
-      compose -f compose.yaml -f compose.ollama.yaml up -d --build "$@"
-    else
-      compose up -d --build "$@"
-    fi
+    compose_stack up -d --build "$@"
     urls
     ;;
   down)
     ensure_env
-    if $with_ollama; then
-      compose -f compose.yaml -f compose.ollama.yaml down "$@"
-    else
-      compose down "$@"
-    fi
+    compose_stack down "$@"
     ;;
   pull)
     ensure_env
     if $with_ollama; then
-      compose -f compose.yaml -f compose.ollama.yaml pull open-webui hoppscotch-db hoppscotch-migrate hoppscotch cloudbeaver cyberchef searxng ollama "$@"
+      compose_stack pull open-webui hoppscotch-db hoppscotch-migrate hoppscotch cloudbeaver cyberchef searxng ollama "$@"
     else
-      compose pull open-webui hoppscotch-db hoppscotch-migrate hoppscotch cloudbeaver cyberchef searxng "$@"
+      compose_stack pull open-webui hoppscotch-db hoppscotch-migrate hoppscotch cloudbeaver cyberchef searxng "$@"
+    fi
+    if $with_hoppscotch_proxy; then
+      compose_stack pull proxyscotch "$@"
     fi
     ;;
   build)
@@ -157,11 +243,11 @@ case "$command_name" in
     ;;
   status|ps)
     ensure_env
-    compose ps "$@"
+    compose_stack ps "$@"
     ;;
   logs)
     ensure_env
-    compose logs -f "$@"
+    compose_stack logs -f "$@"
     ;;
   migrate)
     ensure_env
@@ -183,7 +269,10 @@ case "$command_name" in
     ;;
   config)
     ensure_env
-    compose config "$@"
+    compose_stack config "$@"
+    ;;
+  doctor)
+    doctor
     ;;
   workspace)
     ensure_env
@@ -207,6 +296,7 @@ case "$command_name" in
   help|-h|--help)
     cat <<'EOF'
 Usage: ./blacksite COMMAND [--local-llm] [ARGS...]
+       ./blacksite COMMAND [--hoppscotch-proxy] [ARGS...]
 
 Commands:
   init             Create .env and generate persistent secrets
@@ -216,6 +306,7 @@ Commands:
   build            Build RevShell and offline HackTricks
   status           Show service status
   logs [SERVICE]   Follow logs
+  doctor           Check local service reachability and common config mistakes
   migrate          Re-run Hoppscotch database migrations
   tools            Create or update the bundled Open WebUI tools
   model [NAME]     Pull an Ollama model (default: qwen3:8b)
@@ -226,6 +317,7 @@ Commands:
 Examples:
   ./blacksite init
   ./blacksite up
+  ./blacksite up --hoppscotch-proxy
   ./blacksite up --local-llm
   ./blacksite model qwen3:8b
 EOF

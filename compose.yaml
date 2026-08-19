@@ -15,7 +15,7 @@ x-hoppscotch-environment: &hoppscotch-environment
   VITE_BACKEND_GQL_URL: ${HOPPSCOTCH_PUBLIC_URL}/backend/graphql
   VITE_BACKEND_WS_URL: ${HOPPSCOTCH_WS_URL}/backend/graphql
   VITE_BACKEND_API_URL: ${HOPPSCOTCH_PUBLIC_URL}/backend/v1
-  VITE_PROXYSCOTCH_ACCESS_TOKEN: ""
+  VITE_PROXYSCOTCH_ACCESS_TOKEN: ${PROXYSCOTCH_TOKEN:-}
 
 services:
   open-webui:
@@ -151,6 +151,12 @@ services:
       - SETGID
       - SETUID
       - DAC_OVERRIDE
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     networks:
       - tools
 
@@ -197,6 +203,37 @@ services:
     networks:
       - tools
 
+  proxyscotch:
+    image: hoppscotch/proxyscotch:${PROXYSCOTCH_REF:-v0.1.2}
+    restart: unless-stopped
+    profiles:
+      - hoppscotch-proxy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cd /usr/bin
+        exec ./proxyscotch \
+          --host=0.0.0.0:9159 \
+          --token="$${PROXYSCOTCH_TOKEN}" \
+          --allowed-origins="$${PROXYSCOTCH_ALLOWED_ORIGINS}" \
+          --banned-outputs="$${PROXYSCOTCH_BANNED_OUTPUTS}" \
+          --banned-dests="$${PROXYSCOTCH_BANNED_DESTS}"
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PROXYSCOTCH_PORT:-9159}:9159"
+    environment:
+      PROXYSCOTCH_TOKEN: ${PROXYSCOTCH_TOKEN:-}
+      PROXYSCOTCH_ALLOWED_ORIGINS: ${PROXYSCOTCH_ALLOWED_ORIGINS:-http://localhost:9001,http://127.0.0.1:9001}
+      PROXYSCOTCH_BANNED_OUTPUTS: ${PROXYSCOTCH_BANNED_OUTPUTS:-}
+      PROXYSCOTCH_BANNED_DESTS: ${PROXYSCOTCH_BANNED_DESTS:-169.254.169.254,metadata.google.internal,100.100.100.200}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9159/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - tools
+
   cloudbeaver:
     image: dbeaver/cloudbeaver:26.1.2
     restart: unless-stopped
@@ -205,6 +242,12 @@ services:
     volumes:
       - cloudbeaver-workspace:/opt/cloudbeaver/workspace
       - ${OPEN_WEBUI_INPUT_DIR:-./workspace/input}:/workspace/input:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8978/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     networks:
       - tools
 
