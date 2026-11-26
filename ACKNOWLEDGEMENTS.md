@@ -1,12 +1,13 @@
 # Acknowledgements
 
-Blacksite packages and configures tools created by the projects below. Their
+Blacksite pulls, builds, and configures tools created by the projects below. Their
 maintainers and contributors deserve credit for the applications, reference
 material, and infrastructure used here.
 
 Credits do not replace license terms. The [license review](docs/licensing-review.md)
-records the checked upstream terms and unresolved permissions. In particular,
-HackTricks asks users to contact its author about commercial use.
+records the checked upstream terms. Publishing this workspace's integration code
+is separate from distributing downloaded applications or built images. Users
+should check the upstream terms for their own use and any later redistribution.
 
 ## Included applications
 

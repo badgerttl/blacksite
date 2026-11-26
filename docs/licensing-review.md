@@ -6,13 +6,24 @@ legal opinion or a complete audit of every file inside the container images.
 Because Blacksite tracks mutable upstream tags and Git refs, these findings must
 be checked again when the resolved versions or distribution model change.
 
-## Findings that need attention
+## Scope of the workspace
 
-1. HackTricks is not cleared for commercial use by this review. Its current FAQ
-   contains custom terms, retains third-party content restrictions, and directs
-   commercial-use inquiries to the author. Blacksite describes consultancy use,
-   so obtain clarification or permission for that use before treating the local
-   mirror as commercially cleared. Credit alone does not settle this question.
+Blacksite is a local security workspace. The repository supplies integration
+scripts, configuration, and Blacksite's own workspace tools. Users pull upstream
+images and build reference sites locally. The repository does not contain the
+downloaded applications, reference content, container images, or user artifacts.
+This review has not identified a license violation in publishing that integration
+code. It does not establish permission for every possible use of the downloaded
+tools. Changing Blacksite's description does not change upstream license terms.
+
+## Conditions for use and future redistribution
+
+1. HackTricks has custom terms. Its current FAQ retains third-party content
+   restrictions and directs commercial-use inquiries to the author. Publishing
+   scripts that fetch it is different from distributing the book. Users planning
+   commercial use or redistribution of the downloaded content should clarify the
+   applicable permission. This review does not conclude that publishing Blacksite's
+   integration code violates those terms. Attribution alone does not resolve them.
    Do not label the current content with a Creative Commons license taken from an
    older fork. [HackTricks license section](https://github.com/HackTricks-wiki/hacktricks/blob/master/src/welcome/hacktricks-values-and-faq.md#license).
 2. Preserve Open WebUI's product branding. Its current custom license allows
@@ -40,7 +51,7 @@ be checked again when the resolved versions or distribution model change.
 | CloudBeaver Community | [Apache-2.0](https://github.com/dbeaver/cloudbeaver/blob/devel/LICENSE) | Include the license, retain relevant notices, mark modified files, and preserve any applicable upstream NOTICE. Commercial editions and individual database drivers require separate checks. |
 | CyberChef | [Apache-2.0](https://github.com/gchq/CyberChef/blob/master/LICENSE) | Same Apache redistribution obligations; preserve any applicable third-party notices shipped with the image. |
 | Reverse Shell Generator | [MIT, Ryan Montgomery](https://github.com/0dayCTF/reverse-shell-generator/blob/main/LICENSE) | Preserve its copyright and permission notice. The existing Dockerfile copies the source root, including LICENSE, to the served directory. |
-| HackTricks | [Custom FAQ license and third-party terms](https://github.com/HackTricks-wiki/hacktricks/blob/master/src/welcome/hacktricks-values-and-faq.md#license) | Sharing/adaptation language is qualified by the page's additional terms. Commercial consultancy use remains unresolved; retain source attribution and original third-party references. |
+| HackTricks | [Custom FAQ license and third-party terms](https://github.com/HackTricks-wiki/hacktricks/blob/master/src/welcome/hacktricks-values-and-faq.md#license) | Downloaded content remains subject to its terms. Clarify commercial use or redistribution if planned; retain source attribution and original third-party references. |
 | SearXNG | [AGPL-3.0](https://github.com/searxng/searxng/blob/master/LICENSE); source identifies [AGPL-3.0-or-later](https://github.com/searxng/searxng/blob/master/searx/__init__.py) | Running unmodified software is permitted. Conveying copies carries notice and corresponding-source requirements. A modified network-accessible version must offer its corresponding source to remote users under section 13. |
 | Ollama | [MIT](https://github.com/ollama/ollama/blob/main/LICENSE) | Preserve notices when distributing Ollama. Its MIT license does not license downloaded model weights; the documented [qwen3:8b model](https://ollama.com/library/qwen3:8b) separately lists Apache-2.0. Check each chosen model. |
 
@@ -107,7 +118,8 @@ Before distributing built images or an offline bundle:
 - For copyleft components, satisfy the matching source provision applicable to
   the actual distribution method. A generic upstream homepage may be insufficient.
 - Preserve upstream product branding and avoid claiming upstream endorsement.
-- Clear HackTricks commercial use and any reused third-party content separately.
+- Clarify HackTricks permissions for the intended distribution and any reused
+  third-party content separately.
 - Check model licenses, optional drivers, base-image packages, copied fonts,
   JavaScript, images, and other assets at their resolved versions.
 

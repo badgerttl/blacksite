@@ -1,17 +1,24 @@
-# Blacksite tool stack
+# Blacksite local security workspace
 
 ## Acknowledgements
 
 Blacksite depends on the work of the upstream tool authors and maintainers.
 See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for project credits and source links.
-See the [license review](docs/licensing-review.md) for usage and redistribution
-requirements. HackTricks commercial use is not cleared by this acknowledgement.
+See the [license review](docs/licensing-review.md) for upstream terms and the
+distinction between publishing this workspace configuration and redistributing
+downloaded software.
 
 ## Overview
 
-A local-first, multi-container security consultancy toolkit for Docker Compose or
-Podman Compose. All application images and local builds support `linux/amd64` and
-`linux/arm64`, including Apple M-series hosts.
+A local-first security workspace for AI-assisted analysis, API testing, database
+exploration, and security references. Blacksite uses Docker Compose or Podman
+Compose to pull, build, and run independent upstream tools on your machine.
+This repository contains the integration scripts, configuration, and Blacksite
+workspace tools; upstream applications and reference content are downloaded when
+you build or start the stack.
+
+All application images and local builds support `linux/amd64` and `linux/arm64`,
+including Apple M-series hosts.
 
 ## Included services
 
