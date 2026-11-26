@@ -1,5 +1,14 @@
 # Blacksite tool stack
 
+## Acknowledgements
+
+Blacksite depends on the work of the upstream tool authors and maintainers.
+See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for project credits and source links.
+See the [license review](docs/licensing-review.md) for usage and redistribution
+requirements. HackTricks commercial use is not cleared by this acknowledgement.
+
+## Overview
+
 A local-first, multi-container security consultancy toolkit for Docker Compose or
 Podman Compose. All application images and local builds support `linux/amd64` and
 `linux/arm64`, including Apple M-series hosts.
@@ -189,8 +198,3 @@ the new database. See [upgrade notes](docs/upgrading.md).
 
 `./blacksite down` preserves data; `docker compose down -v` (or the
 Podman equivalent) permanently deletes all named-volume data.
-
-## Acknowledgements
-
-Blacksite depends on the work of the upstream tool authors and maintainers.
-See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for project credits and source links.

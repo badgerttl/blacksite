@@ -4,26 +4,30 @@ Blacksite packages and configures tools created by the projects below. Their
 maintainers and contributors deserve credit for the applications, reference
 material, and infrastructure used here.
 
+Credits do not replace license terms. The [license review](docs/licensing-review.md)
+records the checked upstream terms and unresolved permissions. In particular,
+HackTricks asks users to contact its author about commercial use.
+
 ## Included applications
 
-| Project | Contribution to Blacksite | Upstream |
+| Project | Contribution to Blacksite | Upstream terms |
 | --- | --- | --- |
-| Open WebUI | AI chat interface and runtime for Blacksite's workspace tools | [open-webui/open-webui](https://github.com/open-webui/open-webui) |
-| Hoppscotch | API client and administration interface | [hoppscotch/hoppscotch](https://github.com/hoppscotch/hoppscotch) |
-| Proxyscotch | Hoppscotch's HTTP proxy interceptor | [hoppscotch/proxyscotch](https://github.com/hoppscotch/proxyscotch) |
-| CloudBeaver by DBeaver | Browser database client | [dbeaver/cloudbeaver](https://github.com/dbeaver/cloudbeaver) |
-| CyberChef by GCHQ | Data conversion, encoding, and analysis | [gchq/CyberChef](https://github.com/gchq/CyberChef) |
-| Reverse Shell Generator | Local reverse-shell reference and generator | [0dayCTF/reverse-shell-generator](https://github.com/0dayCTF/reverse-shell-generator) |
-| HackTricks | Locally built security reference by Carlos Polop and contributors | [HackTricks-wiki/hacktricks](https://github.com/HackTricks-wiki/hacktricks) |
-| SearXNG | Search engine used by Open WebUI | [searxng/searxng](https://github.com/searxng/searxng) |
-| Ollama | Optional local model server | [ollama/ollama](https://github.com/ollama/ollama) |
+| [Open WebUI](https://github.com/open-webui/open-webui) | AI chat interface and runtime for Blacksite's workspace tools | [Open WebUI License with branding conditions](https://github.com/open-webui/open-webui/blob/main/LICENSE) |
+| [Hoppscotch](https://github.com/hoppscotch/hoppscotch) | API client and administration interface | [Community repository MIT license](https://github.com/hoppscotch/hoppscotch/blob/main/LICENSE) |
+| [Proxyscotch](https://github.com/hoppscotch/proxyscotch) | Hoppscotch's HTTP proxy interceptor | [MIT](https://github.com/hoppscotch/proxyscotch/blob/master/LICENSE) |
+| [CloudBeaver by DBeaver](https://github.com/dbeaver/cloudbeaver) | Browser database client | [Community edition Apache-2.0](https://github.com/dbeaver/cloudbeaver/blob/devel/LICENSE) |
+| [CyberChef by GCHQ](https://github.com/gchq/CyberChef) | Data conversion, encoding, and analysis | [Apache-2.0](https://github.com/gchq/CyberChef/blob/master/LICENSE) |
+| [Reverse Shell Generator](https://github.com/0dayCTF/reverse-shell-generator) | Local reverse-shell reference and generator by Ryan Montgomery and contributors | [MIT](https://github.com/0dayCTF/reverse-shell-generator/blob/main/LICENSE) |
+| [HackTricks](https://github.com/HackTricks-wiki/hacktricks) | Locally built security reference by Carlos Polop and contributors | [Custom terms; commercial use requires clarification](https://github.com/HackTricks-wiki/hacktricks/blob/master/src/welcome/hacktricks-values-and-faq.md#license) |
+| [SearXNG](https://github.com/searxng/searxng) | Search engine used by Open WebUI | [AGPL-3.0-or-later](https://github.com/searxng/searxng/blob/master/LICENSE) |
+| [Ollama](https://github.com/ollama/ollama) | Optional local model server | [MIT](https://github.com/ollama/ollama/blob/main/LICENSE); downloaded models have separate licenses |
 
 ## Supporting projects
 
 - [PostgreSQL](https://www.postgresql.org/) stores Hoppscotch data.
 - [NGINX](https://nginx.org/) serves the local reference sites.
 - [mdBook](https://github.com/rust-lang/mdBook) and
-  [mdbook-tabs](https://github.com/RustForWeb/mdbook-tabs) build HackTricks.
+  [mdbook-tabs](https://github.com/RustForWeb/mdbook-plugins) build HackTricks.
 - [Rust](https://www.rust-lang.org/) and [Alpine Linux](https://alpinelinux.org/)
   provide the local build toolchain and container bases.
 - [Docker Compose](https://github.com/docker/compose),
