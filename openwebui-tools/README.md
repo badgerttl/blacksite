@@ -1,5 +1,8 @@
 # Blacksite Open WebUI tools
 
+The current Blacksite tools are licensed under GPL-3.0-only. See the repository's
+[LICENSE](../LICENSE). Upstream applications retain their own licenses.
+
 These standalone Python tools operate only within Blacksite's mounted workspace:
 
 - `security_output_parser.py` detects and normalises common security-tool formats, Tenable exports, and arbitrary CSV data.

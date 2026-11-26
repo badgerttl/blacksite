@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Jay Morris
 """Exercise image refresh behavior without contacting a container engine."""
 
 import json

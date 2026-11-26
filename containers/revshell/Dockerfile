@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Jay Morris
 FROM alpine/git:latest AS source
 ARG REVSHELL_REF=HEAD
 ARG UPSTREAM_REFRESH=manual

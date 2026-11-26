@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Jay Morris
 FROM rust:alpine AS builder
 ARG HACKTRICKS_REF=HEAD
 RUN apk add --no-cache git python3 musl-dev gcc

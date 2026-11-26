@@ -1,10 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Jay Morris
 """
 title: Blacksite Security Output Parser
 author: Blacksite
 description: Detect and normalise common security-tool outputs, all documented Tenable export families, and arbitrary CSV files.
 required_open_webui_version: 0.10.0
 version: 1.1.0
-license: MIT
+license: GPL-3.0-only
 """
 
 from __future__ import annotations

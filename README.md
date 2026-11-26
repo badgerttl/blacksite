@@ -205,3 +205,16 @@ the new database. See [upgrade notes](docs/upgrading.md).
 
 `./blacksite down` preserves data; `docker compose down -v` (or the
 Podman equivalent) permanently deletes all named-volume data.
+
+## License
+
+Copyright (C) 2026 Jay Morris.
+
+Blacksite's original code, configuration, and documentation are licensed under
+the GNU General Public License, version 3 only, `GPL-3.0-only`. You may redistribute
+and modify them under those terms. Blacksite comes without warranty; see
+[LICENSE](LICENSE) for the full terms.
+
+Independent upstream applications, reference content, dependencies, and model
+weights retain their own licenses. See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md)
+and the [upstream license review](docs/licensing-review.md).

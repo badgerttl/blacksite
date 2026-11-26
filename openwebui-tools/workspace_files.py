@@ -1,10 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Jay Morris
 """
 title: Blacksite Workspace Files
 author: Blacksite
 description: Safely list, inspect, read, and search files in the mounted Blacksite input workspace.
 required_open_webui_version: 0.10.0
 version: 1.0.0
-license: MIT
+license: GPL-3.0-only
 """
 
 from __future__ import annotations

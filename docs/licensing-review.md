@@ -130,6 +130,11 @@ it is a reason to inspect the generated output before redistribution, not a
 finding of a proven violation here.
 [mdBook upstream issue 2956](https://github.com/rust-lang/mdBook/issues/2956).
 
-No new license has been assigned to Blacksite's own code by this review. Existing
-tool frontmatter saying MIT is not a license grant for the separate upstream
-applications or downloaded content.
+## Blacksite's own license
+
+Blacksite's original code, configuration, and documentation are licensed under
+GPL-3.0-only; see [LICENSE](../LICENSE). The current workspace tools declare the
+same license in their metadata. This grant does not relicense independent upstream
+applications, dependencies, reference material, or model weights. Earlier tool
+versions published under MIT retain the permissions already granted for those
+versions.
