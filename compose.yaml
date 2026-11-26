@@ -8,18 +8,19 @@ x-hoppscotch-environment: &hoppscotch-environment
   TRUST_PROXY: "false"
   ENABLE_SUBPATH_BASED_ACCESS: "true"
   # 8080 is reserved by the AIO backend; Caddy uses this separate public port.
-  HOPP_AIO_ALTERNATE_PORT: "3000"
+  HOPP_ALTERNATE_PORT: "3000"
   VITE_BASE_URL: ${HOPPSCOTCH_PUBLIC_URL}
   VITE_SHORTCODE_BASE_URL: ${HOPPSCOTCH_PUBLIC_URL}
   VITE_ADMIN_URL: ${HOPPSCOTCH_PUBLIC_URL}/admin
   VITE_BACKEND_GQL_URL: ${HOPPSCOTCH_PUBLIC_URL}/backend/graphql
   VITE_BACKEND_WS_URL: ${HOPPSCOTCH_WS_URL}/backend/graphql
   VITE_BACKEND_API_URL: ${HOPPSCOTCH_PUBLIC_URL}/backend/v1
+  PROXY_APP_URL: ${PROXYSCOTCH_PUBLIC_URL:-http://localhost:9159}
   VITE_PROXYSCOTCH_ACCESS_TOKEN: ${PROXYSCOTCH_TOKEN:-}
 
 services:
   open-webui:
-    image: ghcr.io/open-webui/open-webui:v0.10.1
+    image: ghcr.io/open-webui/open-webui:latest
     restart: unless-stopped
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${OPEN_WEBUI_PORT:-9000}:8080"
@@ -107,7 +108,7 @@ services:
       start_period: 20s
 
   open-webui-tools-deploy:
-    image: ghcr.io/open-webui/open-webui:v0.10.1
+    image: ghcr.io/open-webui/open-webui:latest
     restart: "no"
     entrypoint: ["python", "/deployer/deploy-openwebui-tools.py"]
     environment:
@@ -135,7 +136,7 @@ services:
       - tools
 
   searxng:
-    image: searxng/searxng:2026.7.17-81c9c2386
+    image: searxng/searxng:latest
     restart: unless-stopped
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${SEARXNG_PORT:-9006}:8080"
@@ -161,7 +162,7 @@ services:
       - tools
 
   hoppscotch-db:
-    image: postgres:16-alpine
+    image: postgres:19-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: hoppscotch
@@ -173,12 +174,12 @@ services:
       timeout: 5s
       retries: 20
     volumes:
-      - hoppscotch-db-data:/var/lib/postgresql/data
+      - hoppscotch-db-data-v19:/var/lib/postgresql
     networks:
       - tools
 
   hoppscotch-migrate:
-    image: hoppscotch/hoppscotch:2026.3.1
+    image: hoppscotch/hoppscotch:latest
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command: ["pnpm exec prisma migrate deploy"]
@@ -190,7 +191,7 @@ services:
       - tools
 
   hoppscotch:
-    image: hoppscotch/hoppscotch:2026.3.1
+    image: hoppscotch/hoppscotch:latest
     restart: unless-stopped
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${HOPPSCOTCH_PORT:-9001}:3000"
@@ -204,10 +205,8 @@ services:
       - tools
 
   proxyscotch:
-    image: hoppscotch/proxyscotch:${PROXYSCOTCH_REF:-v0.1.2}
+    image: hoppscotch/proxyscotch:${PROXYSCOTCH_REF:-latest}
     restart: unless-stopped
-    profiles:
-      - hoppscotch-proxy
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -226,7 +225,14 @@ services:
       PROXYSCOTCH_BANNED_OUTPUTS: ${PROXYSCOTCH_BANNED_OUTPUTS:-}
       PROXYSCOTCH_BANNED_DESTS: ${PROXYSCOTCH_BANNED_DESTS:-169.254.169.254,metadata.google.internal,100.100.100.200}
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9159/"]
+      # Check the local response without following its redirect to hoppscotch.io.
+      test:
+        - CMD-SHELL
+        - >-
+          printf 'GET / HTTP/1.0\r\nHost: localhost\r\n\r\n' |
+          nc -w 3 127.0.0.1 9159 |
+          head -n 1 |
+          grep -Eq '^HTTP/[0-9.]+ [23][0-9][0-9]'
       interval: 10s
       timeout: 5s
       retries: 12
@@ -235,7 +241,7 @@ services:
       - tools
 
   cloudbeaver:
-    image: dbeaver/cloudbeaver:26.1.2
+    image: dbeaver/cloudbeaver:latest
     restart: unless-stopped
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${CLOUDBEAVER_PORT:-9002}:8978"
@@ -243,7 +249,15 @@ services:
       - cloudbeaver-workspace:/opt/cloudbeaver/workspace
       - ${OPEN_WEBUI_INPUT_DIR:-./workspace/input}:/workspace/input:ro
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8978/"]
+      test:
+        - CMD
+        - bash
+        - -ec
+        - |
+          exec 3<>/dev/tcp/127.0.0.1/8978
+          printf 'GET / HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3
+          IFS= read -r -t 4 status <&3
+          [[ "$${status}" =~ ^HTTP/[0-9.]+[[:space:]]+[23][0-9][0-9] ]]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -255,8 +269,9 @@ services:
     build:
       context: ./containers/revshell
       args:
-        REVSHELL_REF: ${REVSHELL_REF:-9fda27f91b1b1f370539dd534bc3bbb1f6b49bf6}
-    image: localhost/blacksite-revshell:${REVSHELL_REF:-9fda27f91b1b1f370539dd534bc3bbb1f6b49bf6}
+        UPSTREAM_REFRESH: ${UPSTREAM_REFRESH:-manual}
+        REVSHELL_REF: ${REVSHELL_REF:-HEAD}
+    image: localhost/blacksite-revshell:${REVSHELL_REF:-HEAD}
     restart: unless-stopped
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${REVSHELL_PORT:-9004}:8080"
@@ -269,7 +284,7 @@ services:
       - tools
 
   cyberchef:
-    image: ghcr.io/gchq/cyberchef:11.2.0
+    image: ghcr.io/gchq/cyberchef:latest
     restart: unless-stopped
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${CYBERCHEF_PORT:-9003}:8080"
@@ -285,8 +300,9 @@ services:
     build:
       context: ./containers/hacktricks
       args:
-        HACKTRICKS_REF: ${HACKTRICKS_REF:-44710df25c15548cb3b03227d62c7773835aa5b3}
-    image: localhost/blacksite-hacktricks:${HACKTRICKS_REF:-44710df25c15548cb3b03227d62c7773835aa5b3}
+        UPSTREAM_REFRESH: ${UPSTREAM_REFRESH:-manual}
+        HACKTRICKS_REF: ${HACKTRICKS_REF:-HEAD}
+    image: localhost/blacksite-hacktricks:${HACKTRICKS_REF:-HEAD}
     restart: unless-stopped
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${HACKTRICKS_PORT:-9005}:8080"
@@ -304,5 +320,5 @@ networks:
 
 volumes:
   open-webui-data:
-  hoppscotch-db-data:
+  hoppscotch-db-data-v19:
   cloudbeaver-workspace:

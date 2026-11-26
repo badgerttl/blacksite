@@ -117,7 +117,7 @@ urls() {
   printf '%-15s http://%s:%s\n' 'Open WebUI' "$host" "$open_webui_port"
   printf '%-15s http://%s:%s\n' 'Hoppscotch' "$host" "$hoppscotch_port"
   printf '%-15s http://%s:%s/admin\n' 'Hopp Admin' "$host" "$hoppscotch_port"
-  printf '%-15s http://%s:%s %s\n' 'Proxyscotch' "$host" "$proxyscotch_port" '(optional; use --hoppscotch-proxy)'
+  printf '%-15s http://%s:%s\n' 'Proxyscotch' "$host" "$proxyscotch_port"
   printf '%-15s http://%s:%s\n' 'CloudBeaver' "$host" "$cloudbeaver_port"
   printf '%-15s http://%s:%s\n' 'CyberChef' "$host" "$cyberchef_port"
   printf '%-15s http://%s:%s\n' 'RevShell' "$host" "$revshell_port"
@@ -169,18 +169,18 @@ doctor() {
   curl_check 'Hoppscotch admin' "http://localhost:${hoppscotch_port}/admin" || failed=1
   curl_check 'Hoppscotch backend' "http://localhost:${hoppscotch_port}/backend/ping" || failed=1
 
-  proxy_running="$(compose -f compose.yaml --profile hoppscotch-proxy ps --services --filter status=running 2>/dev/null | grep -x 'proxyscotch' || true)"
+  proxy_running="$(compose -f compose.yaml ps --services --filter status=running 2>/dev/null | grep -x 'proxyscotch' || true)"
   if [[ -n "$proxy_running" ]]; then
     curl_check 'Proxyscotch' "http://localhost:${proxyscotch_port}" '2..4' || failed=1
   else
-    printf '[skip] %-24s not running; start with --hoppscotch-proxy\n' 'Proxyscotch'
+    printf '[fail] %-24s not running; start with ./blacksite up\n' 'Proxyscotch'
+    failed=1
   fi
 
   return "$failed"
 }
 
 with_ollama=false
-with_hoppscotch_proxy=false
 args=()
 for arg in "$@"; do
   case "$arg" in
@@ -188,7 +188,7 @@ for arg in "$@"; do
       with_ollama=true
       ;;
     --hoppscotch-proxy)
-      with_hoppscotch_proxy=true
+      # Accepted for compatibility; the proxy now starts by default.
       ;;
     *)
       args+=("$arg")
@@ -203,11 +203,20 @@ if $with_ollama; then
 fi
 
 compose_stack() {
-  local args=("${compose_files[@]}")
-  if $with_hoppscotch_proxy; then
-    args+=(--profile hoppscotch-proxy)
+  compose "${compose_files[@]}" "$@"
+}
+
+pull_images() {
+  local services=(open-webui open-webui-tools-deploy hoppscotch-db hoppscotch-migrate hoppscotch proxyscotch cloudbeaver cyberchef searxng)
+  if $with_ollama; then
+    services+=(ollama)
   fi
-  compose "${args[@]}" "$@"
+  compose_stack pull "${services[@]}" "$@"
+}
+
+build_images() {
+  # Invalidate source/toolchain layers so mutable Git refs and Cargo releases refresh.
+  UPSTREAM_REFRESH="$(date -u +%Y%m%dT%H%M%S)-$$" compose_stack build --pull "$@"
 }
 
 command_name="${1:-help}"
@@ -219,7 +228,9 @@ case "$command_name" in
     ;;
   up)
     ensure_env
-    compose_stack up -d --build "$@"
+    pull_images
+    build_images
+    compose_stack up -d "$@"
     urls
     ;;
   down)
@@ -228,18 +239,12 @@ case "$command_name" in
     ;;
   pull)
     ensure_env
-    if $with_ollama; then
-      compose_stack pull open-webui hoppscotch-db hoppscotch-migrate hoppscotch cloudbeaver cyberchef searxng ollama "$@"
-    else
-      compose_stack pull open-webui hoppscotch-db hoppscotch-migrate hoppscotch cloudbeaver cyberchef searxng "$@"
-    fi
-    if $with_hoppscotch_proxy; then
-      compose_stack pull proxyscotch "$@"
-    fi
+    pull_images "$@"
     ;;
   build)
     ensure_env
-    compose build "$@"
+    pull_images
+    build_images "$@"
     ;;
   status|ps)
     ensure_env
@@ -296,14 +301,13 @@ case "$command_name" in
   help|-h|--help)
     cat <<'EOF'
 Usage: ./blacksite COMMAND [--local-llm] [ARGS...]
-       ./blacksite COMMAND [--hoppscotch-proxy] [ARGS...]
 
 Commands:
   init             Create .env and generate persistent secrets
-  up               Build and start all services
+  up               Pull current images/sources, build, and start all services
   down             Stop services (data volumes are preserved)
   pull             Pull updated pre-built images
-  build            Build RevShell and offline HackTricks
+  build            Pull current images and rebuild RevShell and offline HackTricks
   status           Show service status
   logs [SERVICE]   Follow logs
   doctor           Check local service reachability and common config mistakes
@@ -317,7 +321,6 @@ Commands:
 Examples:
   ./blacksite init
   ./blacksite up
-  ./blacksite up --hoppscotch-proxy
   ./blacksite up --local-llm
   ./blacksite model qwen3:8b
 EOF

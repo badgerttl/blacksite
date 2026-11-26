@@ -1,8 +1,10 @@
-FROM rust:1.88-alpine AS builder
-ARG HACKTRICKS_REF
+FROM rust:alpine AS builder
+ARG HACKTRICKS_REF=HEAD
 RUN apk add --no-cache git python3 musl-dev gcc
-RUN cargo install --locked --version 0.4.52 mdbook \
-    && cargo install --locked --version 0.2.3 mdbook-tabs
+ARG UPSTREAM_REFRESH=manual
+RUN echo "Refreshing upstream: ${UPSTREAM_REFRESH}" \
+    && cargo install --locked mdbook \
+    && cargo install --locked mdbook-tabs
 WORKDIR /src
 RUN git clone https://github.com/HackTricks-wiki/hacktricks.git . \
     && git checkout --detach "${HACKTRICKS_REF}" \
@@ -10,7 +12,7 @@ RUN git clone https://github.com/HackTricks-wiki/hacktricks.git . \
 ENV MDBOOK_PREPROCESSOR__HACKTRICKS__ENV=dev
 RUN mdbook build --dest-dir /out
 
-FROM nginx:1.29-alpine
+FROM nginx:alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /out/ /usr/share/nginx/html/
 EXPOSE 8080

@@ -12,11 +12,11 @@ Open WebUI's CSP headers do not control Hoppscotch requests.
 ## Start the proxy
 
 ```sh
-./blacksite up --hoppscotch-proxy
+./blacksite up
 ```
 
-The optional service listens on `http://localhost:9159` by default. It is not
-started by a normal `./blacksite up`.
+The service starts with the default stack and listens on `http://localhost:9159`.
+The older `--hoppscotch-proxy` flag is still accepted for compatibility.
 
 ## Configure Hoppscotch
 
@@ -24,7 +24,13 @@ started by a normal `./blacksite up`.
 2. Open Settings.
 3. Go to Interceptors.
 4. Enable the Proxy interceptor.
-5. Set the Proxy URL to `http://localhost:9159`.
+5. Confirm the Proxy URL is `http://localhost:9159`. Blacksite supplies this default
+   through Hoppscotch's `PROXY_APP_URL` environment setting. Use Reset Default if
+   an existing browser preference still points to another proxy.
+
+Set `PROXYSCOTCH_PUBLIC_URL` in `.env` when the browser needs a different URL,
+including when changing `PROXYSCOTCH_PORT`. This URL must be reachable from the
+browser, so it uses the host address rather than the Docker service name.
 
 The proxy root redirects to `https://hoppscotch.io/` for ordinary browser GET
 requests. That is expected. Hoppscotch uses the URL by sending `POST` requests
@@ -49,7 +55,7 @@ Expected local checks:
 - Hoppscotch app returns HTTP 2xx or 3xx.
 - Hoppscotch admin returns HTTP 2xx or 3xx.
 - Hoppscotch backend `/backend/ping` returns HTTP 2xx or 3xx.
-- Proxyscotch is skipped unless the proxy profile is running.
+- Proxyscotch is running and responds to the local reachability check.
 - A direct `GET /` to Proxyscotch may return a redirect to `hoppscotch.io`.
 
 If the browser console says a request was blocked by CORS, enable the proxy

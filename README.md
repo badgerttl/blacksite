@@ -11,7 +11,7 @@ Podman Compose. All application images and local builds support `linux/amd64` an
 | Open WebUI | http://localhost:9000 | chats, users, settings |
 | Hoppscotch | http://localhost:9001 | PostgreSQL database |
 | Hoppscotch admin | http://localhost:9001/admin | same database |
-| Proxyscotch | http://localhost:9159 | optional Hoppscotch CORS proxy |
+| Proxyscotch | http://localhost:9159 | Hoppscotch CORS proxy |
 | CloudBeaver | http://localhost:9002 | workspace and connections |
 | CyberChef | http://localhost:9003 | browser local storage |
 | Reverse Shell Generator | http://localhost:9004 | browser local storage |
@@ -27,23 +27,24 @@ The stack binds to `127.0.0.1` by default. It does not expose the tools to the L
 ./blacksite up
 ```
 
-The first build is large because it compiles the pinned HackTricks snapshot. Later
-starts reuse the local image and persistent volumes. Run `./blacksite urls` at any
-time to print the entry points.
+Every `./blacksite up` and `./blacksite build` pulls current application images and
+base images and rebuilds the reference sites from current upstream sources. The
+HackTricks build compiles mdBook and can take several minutes. Persistent volumes
+survive updates. Run `./blacksite urls` to print the entry points.
 
 ### Hoppscotch proxy for browser CORS
 
 Hoppscotch runs in the browser, so requests to APIs that do not allow the
-Hoppscotch origin may be blocked by browser CORS policy. Start the optional
-Proxyscotch service when you need Hoppscotch to send those API requests through a
-local proxy:
+Hoppscotch origin may be blocked by browser CORS policy. Proxyscotch starts with
+the default stack so Hoppscotch can send those API requests through a local proxy:
 
 ```sh
-./blacksite up --hoppscotch-proxy
+./blacksite up
 ```
 
-Then set Hoppscotch's Settings > Interceptors > Proxy URL to
-`http://localhost:9159` and enable the proxy interceptor. A direct browser visit
+Blacksite supplies `PROXY_APP_URL=http://localhost:9159` to Hoppscotch automatically.
+Enable the proxy interceptor in Settings > Interceptors. Previously saved browser
+settings may require Reset Default to adopt the configured URL. A direct browser visit
 to that URL redirects to `hoppscotch.io`; Hoppscotch uses it by sending local
 `POST` requests. The proxy is bound to `127.0.0.1` by default and uses the
 generated `PROXYSCOTCH_TOKEN` value passed to Hoppscotch as
@@ -131,6 +132,9 @@ docker compose up -d --build
 podman compose up -d --build
 ```
 
+Use the `blacksite` helper to refresh images and source repositories on each
+build. Direct Compose builds can reuse cached Git checkout layers.
+
 Rootless engines can use every published port because the containers listen on
 unprivileged ports internally. Named volumes avoid host UID/GID differences.
 
@@ -167,10 +171,26 @@ one-time download.
 ```sh
 ./blacksite pull
 ./blacksite build
-  ./blacksite up
+./blacksite up
 ```
 
-Application versions and upstream source commits are deliberately pinned. Update
-the tags in `compose.yaml` and source commit IDs in `.env` after reviewing upstream
-release notes. `./blacksite down` preserves data; `docker compose down -v` (or the
+Application images follow upstream `latest` tags. Open WebUI's `latest` follows
+its main branch. Local builds pull current Git and NGINX/Rust base images, fetch
+`HEAD` for RevShell and HackTricks, and install current mdBook tools. Set
+`REVSHELL_REF`, `HACKTRICKS_REF`, or `PROXYSCOTCH_REF` in `.env` to freeze those
+components when needed.
+
+PostgreSQL follows the current major release, `19-alpine`, and pulls its latest
+patches. Major database upgrades require an explicit data migration rather than
+changing the image under an existing database directory. This version uses a new
+`hoppscotch-db-data-v19` volume mounted at `/var/lib/postgresql`. Existing PostgreSQL
+16 installations must be dumped and restored before starting Hoppscotch against
+the new database. See [upgrade notes](docs/upgrading.md).
+
+`./blacksite down` preserves data; `docker compose down -v` (or the
 Podman equivalent) permanently deletes all named-volume data.
+
+## Acknowledgements
+
+Blacksite depends on the work of the upstream tool authors and maintainers.
+See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for project credits and source links.

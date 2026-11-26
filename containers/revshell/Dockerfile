@@ -1,11 +1,13 @@
-FROM alpine/git:2.49.1 AS source
-ARG REVSHELL_REF
+FROM alpine/git:latest AS source
+ARG REVSHELL_REF=HEAD
+ARG UPSTREAM_REFRESH=manual
 WORKDIR /src
-RUN git clone https://github.com/0dayCTF/reverse-shell-generator.git . \
+RUN echo "Refreshing upstream: ${UPSTREAM_REFRESH}" \
+    && git clone https://github.com/0dayCTF/reverse-shell-generator.git . \
     && git checkout --detach "${REVSHELL_REF}" \
     && rm -rf .git
 
-FROM nginx:1.29-alpine
+FROM nginx:alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=source /src/ /usr/share/nginx/html/
 EXPOSE 8080

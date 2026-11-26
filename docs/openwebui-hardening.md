@@ -19,7 +19,8 @@ This project applies a security-first local profile based on Open WebUI's offici
 - Apply a restrictive CSP to rendered artifact iframes that blocks outbound connections.
 - Limit uploads to 50 MB and 10 files per request, with extensions needed for documents and security-tool evidence.
 - Drop all Linux capabilities and enable `no-new-privileges` for Open WebUI and its one-shot tool deployer.
-- Pin the official Open WebUI image to a release rather than `main` or `latest`.
+- Pull the official Open WebUI `latest` image on each helper build/start. This
+  follows upstream main; check upgrades against this hardening profile.
 
 Persistent ConfigVar settings are reconciled by `scripts/deploy-openwebui-tools.py`, because Open WebUI's database values take precedence over environment defaults after first startup.
 
